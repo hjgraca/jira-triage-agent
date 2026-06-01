@@ -1,0 +1,15 @@
+.claude/settings.local.json
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+crash.log
+*.tfvars
+!example.tfvars
+.terraform.lock.hcl
+
+# Kube
+kubeconfig

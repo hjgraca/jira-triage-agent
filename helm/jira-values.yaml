@@ -1,0 +1,67 @@
+# Jira Data Center 10.3.18 on EKS — workshop starting point.
+# Atlassian official Helm chart: https://atlassian.github.io/data-center-helm-charts/
+#
+# Single-node Jira with in-cluster Postgres. Single replica means the
+# shared-home can use a normal RWO EBS volume instead of EFS/RWX.
+#
+# LICENSING: Jira DC needs a license. A 30-day evaluation (timebomb) license is
+# available from https://my.atlassian.com — generate one and enter it in the
+# Jira setup wizard on first boot. The eval expires after 30 days.
+
+replicaCount: 1
+
+image:
+  repository: atlassian/jira-software
+  tag: "10.3.18"
+
+# Single replica -> ReadWriteOnce EBS volume is fine for the shared home.
+volumes:
+  localHome:
+    persistentVolumeClaim:
+      create: true
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 10Gi
+  sharedHome:
+    persistentVolumeClaim:
+      create: true
+      storageClassName: gp3
+      # EBS only supports RWO. The chart defaults shared-home to RWX (for
+      # multi-node EFS); single-node Jira is fine on RWO. Override explicitly.
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 20Gi
+
+jira:
+  resources:
+    container:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        memory: 3Gi
+  # Container memory should be ~2x the JVM heap.
+  containerSecurityContext: {}
+
+database:
+  type: postgres72
+  # Points at the in-cluster Postgres deployed alongside this chart (see Makefile).
+  # The Bitnami postgresql release is installed as `jira-postgresql`.
+  url: jdbc:postgresql://jira-postgresql:5432/jira
+  credentials:
+    secretName: jira-db-credentials
+    usernameSecretKey: username
+    passwordSecretKey: password
+
+ingress:
+  create: true
+  className: nginx
+  host: jira.workshop.example.com
+  https: false
+
+# Disable the Atlassian monitoring/agent extras for a lean workshop install.
+monitoring:
+  exposeJmxMetrics: false
