@@ -1,8 +1,9 @@
 # Agentic-Dev Workshop Platform
 
 Infrastructure for a customer-workshop environment: an Amazon EKS cluster
-hosting self-managed **GitLab** and **Jira Data Center 10.3.18**, used to test
-agentic development in an environment similar to a customer's.
+hosting self-managed **GitLab**, used to test agentic development in an
+environment similar to a customer's. Issue tracking uses **Jira Cloud**
+(`*.atlassian.net`) — it is not deployed here.
 
 Everything runs on EKS. This is a **starting point** — see [Caveats](#caveats).
 
@@ -10,7 +11,7 @@ Everything runs on EKS. This is a **starting point** — see [Caveats](#caveats)
 
 ```
 terraform/      VPC + EKS cluster (terraform-aws-modules)
-helm/           Helm values for GitLab, Jira, and Jira's Postgres
+helm/           Helm values for GitLab
 k8s/            Raw manifests applied after Helm (e.g. the SSH LoadBalancer)
 Makefile        Orchestration: cluster -> kubeconfig -> apps
 docs/           Ideation notes
@@ -21,8 +22,6 @@ docs/           Ideation notes
 - AWS account + credentials configured (`aws sts get-caller-identity` works)
 - Terraform >= 1.5.7
 - `kubectl`, `helm`, and the `aws` CLI on PATH
-- A Jira DC license — generate a free 30-day evaluation at
-  <https://my.atlassian.com> (entered in the Jira setup wizard on first boot)
 
 ## Bring it up
 
@@ -34,25 +33,35 @@ That runs, in order:
 
 1. `make cluster` — `terraform apply` for the VPC + EKS cluster (~15 min)
 2. `make kubeconfig` — points `kubectl` at the new cluster
-3. `make apps` — installs GitLab, then Jira + its Postgres
+3. `make apps` — installs GitLab
 
 Override defaults inline, e.g. `make up REGION=eu-west-1 CLUSTER=brisa DOMAIN=workshop.brisa.dev`.
 
-### Accessing the apps
+### Accessing GitLab
 
-Both apps are exposed via the GitLab-bundled nginx ingress (an AWS LoadBalancer).
-Get its hostname:
+GitLab is exposed via its bundled nginx ingress (an AWS LoadBalancer).
+Get the LoadBalancer hostname:
 
 ```bash
 kubectl get svc -n gitlab gitlab-nginx-ingress-controller \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
 
-Point DNS (or `/etc/hosts`) for `gitlab.<domain>` and `jira.<domain>` at it.
+These hostnames aren't in public DNS, so map `gitlab.<domain>` to the
+LoadBalancer locally. `/etc/hosts` needs an **IP**, so resolve the LB first:
 
-- **GitLab** initial root password:
-  `kubectl get secret -n gitlab gitlab-gitlab-initial-root-password -o jsonpath='{.data.password}' | base64 -d`
-- **Jira** finishes setup through its web wizard (enter the eval license + create the admin).
+```bash
+dig +short <lb-hostname>          # pick any returned IP (they can rotate)
+sudo sh -c 'printf "\n%s  gitlab.workshop.example.com\n" <ip> >> /etc/hosts'
+```
+
+Then browse to **http://gitlab.workshop.example.com** (use `http://` — TLS is
+off). Initial root password:
+
+```bash
+kubectl get secret -n gitlab gitlab-gitlab-initial-root-password \
+  -o jsonpath='{.data.password}' | base64 -d
+```
 
 ### Git over SSH
 
@@ -83,7 +92,7 @@ runs on its own LoadBalancer locked to a single source IP** — see
 
 ## Security
 
-The shared nginx LoadBalancer fronting GitLab/Jira exposes web ports to
+The shared nginx LoadBalancer fronting GitLab exposes web ports to
 `0.0.0.0/0`, which is expected for a workshop. Git-over-SSH is treated
 differently: an open port 22 from arbitrary IPs trips AWS network scanners
 (Palisade Riddler), which auto-delete the listener.
@@ -112,15 +121,12 @@ order leaves orphaned ENIs that block VPC deletion.
 
 This is a workshop starting point, not a production deployment:
 
-- **In-cluster state.** GitLab's Postgres/Redis/MinIO and Jira's Postgres run
-  inside the cluster on EBS volumes. GitLab marks its bundled stateful services
-  "evaluation only" (removed entirely in chart 10.x / GitLab 19.0), which is why
-  the chart is pinned to 8.x here. For anything durable, move Postgres to RDS,
-  Redis to ElastiCache, and object storage to S3.
+- **In-cluster state.** GitLab's Postgres/Redis/MinIO run inside the cluster on
+  EBS volumes. GitLab marks its bundled stateful services "evaluation only"
+  (removed entirely in chart 10.x / GitLab 19.0), which is why the chart is
+  pinned to 8.x here. For anything durable, move Postgres to RDS, Redis to
+  ElastiCache, and object storage to S3.
 - **No TLS.** HTTPS is disabled for simplicity. Add cert-manager + ACM or
   Let's Encrypt before exposing this beyond a workshop.
-- **Single-replica Jira.** One node, RWO EBS shared-home. Multi-node Jira DC
-  would need EFS (RWX) shared storage.
-- **Eval license clock.** The Jira DC evaluation license expires after 30 days.
 - **Cost.** The EKS control plane bills ~$0.10/hr and the node group runs
   continuously while up. Run `make destroy` when the platform is idle.

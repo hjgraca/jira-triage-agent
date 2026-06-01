@@ -61,8 +61,8 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   # Managed addons. EBS CSI driver is required for PersistentVolumeClaims
-  # (Jira shared-home, GitLab Gitaly/MinIO, in-cluster Postgres). It needs an
-  # IAM role (IRSA) to call the EC2 EBS APIs — without it PVCs hang Pending.
+  # (GitLab Gitaly/MinIO, in-cluster Postgres). It needs an IAM role (IRSA) to
+  # call the EC2 EBS APIs — without it PVCs hang Pending.
   cluster_addons = {
     coredns    = {}
     kube-proxy = {}

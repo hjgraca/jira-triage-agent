@@ -40,12 +40,16 @@ nginx-ingress:
       # leaving web 80/443 here public. This is what stops Palisade Riddler from
       # flagging open SSH and Epoxy from deleting the listener.
       enableShell: false
+    # Watch ingresses in all namespaces (default is the gitlab namespace only),
+    # so this single controller/LB can front apps deployed in other namespaces.
+    scope:
+      enabled: false
 
 # GitLab Runner off by default — enable if the workshop needs CI execution.
 gitlab-runner:
   install: false
 
-# Trim resource requests so GitLab + Jira co-exist on a 2-node m5.2xlarge group.
+# Trim resource requests to fit the workshop node group.
 gitlab:
   webservice:
     minReplicas: 1

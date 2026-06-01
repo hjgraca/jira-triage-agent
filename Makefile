@@ -1,9 +1,9 @@
-## Agentic-dev workshop platform — EKS + GitLab + Jira
+## Agentic-dev workshop platform — EKS + GitLab
 ##
 ## Usage:
 ##   make cluster      # provision VPC + EKS via Terraform
 ##   make kubeconfig   # point kubectl at the new cluster
-##   make apps         # deploy GitLab + Jira
+##   make apps         # deploy GitLab
 ##   make up           # cluster + kubeconfig + apps (full bring-up)
 ##   make destroy      # tear everything down (runs orphan cleanup first)
 
@@ -16,10 +16,8 @@ TF_DIR         := terraform
 # GitLab chart 8.x/9.x still bundles the in-cluster Postgres/Redis/MinIO
 # subcharts; they are removed in chart 10.x (GitLab 19.0).
 GITLAB_CHART_VERSION ?= 8.11.8
-JIRA_CHART_VERSION   ?= 1.21.0
-PG_CHART_VERSION     ?= 15.5.20
 
-.PHONY: cluster kubeconfig apps up gitlab jira destroy clean-k8s-lb
+.PHONY: cluster kubeconfig apps up gitlab destroy clean-k8s-lb
 
 cluster:
 	cd $(TF_DIR) && terraform init && terraform apply \
@@ -28,7 +26,7 @@ cluster:
 kubeconfig:
 	aws eks update-kubeconfig --region $(REGION) --name $(CLUSTER)
 
-apps: gitlab jira
+apps: gitlab
 
 gitlab:
 	helm repo add gitlab https://charts.gitlab.io/
@@ -43,27 +41,6 @@ gitlab:
 	# on the shared nginx LB; see helm/gitlab-values.yaml). Edit the source
 	# range in this manifest when your public IP changes.
 	kubectl apply -f k8s/gitlab-shell-ssh-lb.yaml
-
-jira:
-	helm repo add bitnami https://charts.bitnami.com/bitnami
-	helm repo add atlassian https://atlassian.github.io/data-center-helm-charts
-	helm repo update
-	# In-cluster Postgres for Jira.
-	helm upgrade --install jira-postgresql bitnami/postgresql \
-		--version $(PG_CHART_VERSION) \
-		--namespace jira --create-namespace \
-		--values helm/jira-postgresql-values.yaml
-	# Secret the Jira chart reads DB credentials from.
-	kubectl create secret generic jira-db-credentials \
-		--namespace jira \
-		--from-literal=username=jira \
-		--from-literal=password=jira-workshop-pw \
-		--dry-run=client -o yaml | kubectl apply -f -
-	helm upgrade --install jira atlassian/jira \
-		--version $(JIRA_CHART_VERSION) \
-		--namespace jira \
-		--values helm/jira-values.yaml \
-		--timeout 600s
 
 up: cluster kubeconfig apps
 
