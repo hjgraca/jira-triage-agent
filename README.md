@@ -90,6 +90,36 @@ runs on its own LoadBalancer locked to a single source IP** — see
 3. Upload your public key to **GitLab > Preferences > SSH Keys**, then clone
    with `git clone git@workshop-gitlab:<group>/<project>.git`.
 
+## Jira Cloud integration
+
+Issue tracking is **Jira Cloud** (`*.atlassian.net`), wired to GitLab via the
+built-in Jira integration. It is **one-way**: GitLab pushes to Jira; Jira does
+not call back into GitLab.
+
+- GitLab's EKS nodes have outbound internet (NAT), so GitLab reaches Jira Cloud.
+- The reverse (Jira's *Development* panel showing branches/commits/MRs) is **not**
+  set up — it needs GitLab on a public DNS name with HTTPS, which this workshop
+  cluster doesn't have.
+
+**Setup** (GitLab project/group → Settings → Integrations → Jira):
+
+- **Web URL**: `https://<your-site>.atlassian.net`
+- **Auth**: Atlassian account email + an API token from
+  <https://id.atlassian.com/manage-profile/security/api-tokens>
+- Enable comments / transitions as desired, then **Test settings** (expect green).
+
+**Usage** — reference the issue key in a commit message, branch name, or MR
+title/description:
+
+```
+git commit -m "Fix login KAN-1"
+```
+
+GitLab renders `KAN-1` as a link and posts a comment back on the Jira issue.
+
+> **Issue keys are case-sensitive — uppercase only.** `KAN-1` works; `kan-1`
+> is ignored and won't link.
+
 ## Security
 
 The shared nginx LoadBalancer fronting GitLab exposes web ports to
