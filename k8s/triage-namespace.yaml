@@ -1,0 +1,26 @@
+# Namespace + ServiceAccount for the Jira triage agent.
+#
+# The ServiceAccount is IRSA-bound: its annotation carries the IAM role ARN that
+# terraform/bedrock.tf creates (module.triage_bedrock_irsa.iam_role_arn). EKS
+# injects AWS_WEB_IDENTITY_TOKEN_FILE + AWS_ROLE_ARN into pods using this SA, so
+# pi reaches Bedrock with no static credential (R12).
+#
+# IMPORTANT: replace <TRIAGE_BEDROCK_ROLE_ARN> below with the Terraform output:
+#   terraform -chdir=terraform output -raw triage_bedrock_role_arn
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: triage
+  labels:
+    app.kubernetes.io/managed-by: workshop-makefile
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: triage-agent
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: triage-agent
+    app.kubernetes.io/managed-by: workshop-makefile
+  annotations:
+    eks.amazonaws.com/role-arn: <TRIAGE_BEDROCK_ROLE_ARN>

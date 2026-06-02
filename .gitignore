@@ -13,3 +13,6 @@ crash.log
 
 # Kube
 kubeconfig
+
+# Real triage secrets (only the .example template is committed)
+k8s/triage-secrets.yaml
