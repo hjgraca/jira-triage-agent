@@ -62,7 +62,7 @@ spec:
             - name: SKILL_PATH
               value: "/skills/jira-triage"
             - name: PI_MODEL
-              value: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+              value: "us.anthropic.claude-sonnet-4-6"
             - name: AWS_REGION
               value: "us-west-2"
             - name: MAX_CONCURRENT

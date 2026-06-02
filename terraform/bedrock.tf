@@ -13,7 +13,7 @@
 variable "bedrock_model_id" {
   description = "Bedrock model ID the triage agent may invoke (e.g. a Claude inference profile). The IAM policy is scoped to exactly this model — resolve it before apply; do not widen to '*'."
   type        = string
-  default     = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+  default     = "us.anthropic.claude-sonnet-4-6"
 }
 
 variable "triage_namespace" {

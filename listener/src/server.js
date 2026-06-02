@@ -14,7 +14,7 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || '/jira-webhook';
 const HMAC_SECRET = process.env.WEBHOOK_HMAC_SECRET || '';
 const PI_BIN = process.env.PI_BIN || 'pi';
-const PI_MODEL = process.env.PI_MODEL || 'us.anthropic.claude-sonnet-4-20250514-v1:0';
+const PI_MODEL = process.env.PI_MODEL || 'us.anthropic.claude-sonnet-4-6';
 const SKILL_PATH = process.env.SKILL_PATH || '/skills/jira-triage';
 // Watchdog ceiling for a single triage run; a child exceeding it is killed so
 // it can't hold a limiter slot forever.
