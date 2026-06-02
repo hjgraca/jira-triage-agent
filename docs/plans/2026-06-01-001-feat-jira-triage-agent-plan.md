@@ -1,7 +1,7 @@
 ---
 title: "feat: Jira Triage Agent on pi.dev (EKS)"
 type: feat
-status: active
+status: completed
 date: 2026-06-01
 origin: docs/brainstorms/2026-06-01-jira-triage-agent-requirements.md
 ---
