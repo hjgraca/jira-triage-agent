@@ -23,4 +23,4 @@ metadata:
     app.kubernetes.io/name: triage-agent
     app.kubernetes.io/managed-by: workshop-makefile
   annotations:
-    eks.amazonaws.com/role-arn: <TRIAGE_BEDROCK_ROLE_ARN>
+    eks.amazonaws.com/role-arn: arn:aws:iam::746792595426:role/workshop-triage-bedrock
