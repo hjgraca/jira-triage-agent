@@ -3,7 +3,9 @@
 #
 # Pinned to Node 20 LTS — pi's minimum Node version is undocumented (KTD9); 20
 # is the conservative floor. Bump only after confirming pi runs on the target.
-FROM node:20-slim
+# Platform pinned to linux/amd64 to match the EKS node arch (m5 = x86_64); the
+# Makefile also passes --platform, this is belt-and-suspenders for direct builds.
+FROM --platform=linux/amd64 node:20-slim
 
 # tini as PID 1 reaps the one-shot pi subprocesses the listener spawns (KTD2/KTD9
 # — node as PID 1 does not reap, so zombies would accumulate). curl/git/jq back

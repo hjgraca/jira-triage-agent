@@ -56,9 +56,10 @@ triage-image:
 		|| aws ecr create-repository --region $(REGION) --repository-name $(TRIAGE_ECR_REPO) >/dev/null
 	aws ecr get-login-password --region $(REGION) \
 		| docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
-	docker build -f docker/triage/Dockerfile -t $(TRIAGE_IMAGE) .
-	docker push $(TRIAGE_IMAGE)
-	@echo "Pushed $(TRIAGE_IMAGE)"
+	# Pin linux/amd64 to match the EKS node arch (m5 = x86_64). Building native
+	# on an arm64 Mac otherwise yields an image the nodes can't exec.
+	docker buildx build --platform linux/amd64 -f docker/triage/Dockerfile -t $(TRIAGE_IMAGE) --push .
+	@echo "Pushed $(TRIAGE_IMAGE) (linux/amd64)"
 
 ## Deploy the Jira triage agent. Applies namespace/SA, config, secrets,
 ## NetworkPolicy, and the listener (Deployment + dedicated LoadBalancer).
