@@ -7,7 +7,7 @@
 ##   make up           # cluster + kubeconfig + apps (full bring-up)
 ##   make destroy      # tear everything down (runs orphan cleanup first)
 
-REGION         ?= us-east-1
+REGION         ?= us-west-2
 CLUSTER        ?= workshop
 DOMAIN         ?= workshop.example.com
 TF_DIR         := terraform
