@@ -77,7 +77,7 @@ spec:
             - name: JIRA_BASE_URL
               value: "https://henriquegraca.atlassian.net"
             - name: GITLAB_BASE_URL
-              value: "http://gitlab-webservice-default.gitlab.svc"
+              value: "http://gitlab-webservice-default.gitlab.svc:8080"
             - name: TRIAGE_CONFIG
               value: "/etc/triage/config.json"
             # Secrets (R13) — from k8s/triage-secrets.yaml
