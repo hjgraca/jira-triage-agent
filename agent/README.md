@@ -5,17 +5,19 @@ Nothing under `workshop/` is required to run it. It's organized as three concern
 
 ```
 runtime/                 THE ENGINE — generic trigger × agent × harness runner
-  listener/              server.js + agent-def.js + auth.js + limits.js + gate.js
+  listener/              server.js (HTTP + gate wiring) + runner.js (run lifecycle)
+                         + agent-def.js + auth.js + limits.js
   trigger/               trigger adapters (jira, generic, + your own)
   harness/               harness adapters (pi, kiro-cli, opencode, + your own)
   test/                  node:test suite  (run: cd runtime && node --test)
 
-agents/                  THE IMPLEMENTATIONS — one dir per agent
-  jira-triage/           SKILL.md (frontmatter = agent def + rubric) + scripts/
+agents/                  THE IMPLEMENTATIONS — one dir per agent, each with its
+  jira-triage/             own Dockerfile (one agent per image, isolated)
+    SKILL.md  scripts/  Dockerfile
   <your-agent>/          ← a code-review agent goes HERE, as its own dir
 
 deploy/                  HOW IT SHIPS
-  docker/                base.Dockerfile + pi/kiro/opencode .Dockerfiles
+  docker/                base.Dockerfile (engine) + pi/kiro/opencode (harness bases)
   k8s/                   namespace/SA, listener Deployment+LB, NetworkPolicy, config/secret
   terraform/             standalone IRSA + optional CloudFront for an EXISTING cluster
 ```
@@ -44,12 +46,12 @@ Short version:
 cd agent/deploy/terraform && cp example.tfvars terraform.tfvars   # edit, then:
 terraform init && terraform apply
 
-# 2. image — shared base, then the harness you want
-docker buildx build --platform linux/amd64 \
-  -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
-docker buildx build --platform linux/amd64 \
-  -f agent/deploy/docker/pi.Dockerfile --build-arg BASE=triage-base:local \
-  -t <repo>/triage-agent:latest --push agent
+# 2. image — three layers: base (engine) → harness (CLI) → agent (one agent)
+make triage-image AGENT=jira-triage HARNESS=pi
+#   …or raw:
+#   docker build -f agent/deploy/docker/base.Dockerfile  -t triage-base:local       agent
+#   docker build -f agent/deploy/docker/pi.Dockerfile    --build-arg BASE=triage-base:local -t triage-pi:local agent
+#   docker build -f agent/agents/jira-triage/Dockerfile  --build-arg BASE=triage-pi:local   -t <repo>:latest  agent
 
 # 3. config + secrets (fill the .example templates), set the SA role ARN,
 #    image, JIRA_BASE_URL, GITLAB_BASE_URL, AUTHORIZED_ACTORS, then:

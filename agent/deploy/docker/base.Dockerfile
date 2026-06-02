@@ -1,14 +1,14 @@
-# Base image: the generic runner (listener + trigger + harness adapters) + the
-# agent implementations (skills), with NO coding-agent CLI installed. The
-# per-harness Dockerfiles (pi.Dockerfile, kiro.Dockerfile, opencode.Dockerfile)
-# build FROM this and add just their CLI — so the listener/agent copy logic and
-# Node setup live in exactly one place.
+# Base image: the generic runner ENGINE ONLY — listener + trigger + harness
+# adapters. NO coding-agent CLI, and NO agents. It is fully reusable: harness
+# images add a CLI (FROM this), and an agent image adds exactly one agent dir
+# (FROM a harness image). Three layers, agent-blank until the last:
 #
-# Build context is the `agent/` directory. Build + tag this first:
-#   docker buildx build --platform linux/amd64 -f deploy/docker/base.Dockerfile -t triage-base agent
-# then a harness image:
-#   docker buildx build --platform linux/amd64 -f deploy/docker/pi.Dockerfile -t <repo>:latest --build-arg BASE=triage-base agent
-# (the Makefile orchestrates this — see `make image HARNESS=...`).
+#   base.Dockerfile        engine only           ← this file
+#   <harness>.Dockerfile   FROM base + the CLI   (still agent-blank)
+#   agents/<x>/Dockerfile  FROM harness + 1 agent (the final, runnable image)
+#
+# Build context is the `agent/` directory. The Makefile orchestrates the chain —
+# see `make image AGENT=<name> HARNESS=<name>`.
 #
 # Pinned to Node 20 LTS; platform pinned to linux/amd64 to match the EKS node
 # arch (m5 = x86_64).
@@ -28,26 +28,25 @@ RUN useradd --uid 10001 --create-home --home-dir /home/triage triage
 
 WORKDIR /app
 
-# The generic runner (zero third-party deps, so no npm install needed):
-#   runtime/listener  — server + agent-def + auth + limits + gate
+# The generic runner ENGINE only (zero third-party deps, no npm install needed):
+#   runtime/listener  — server + runner + agent-def + auth + limits
 #   runtime/trigger    — trigger adapters
 #   runtime/harness    — harness adapters
+# No agents here — an agent image (agents/<name>/Dockerfile) adds the one agent.
 COPY runtime/package.json ./runtime/package.json
 COPY runtime/listener ./runtime/listener
 COPY runtime/trigger ./runtime/trigger
 COPY runtime/harness ./runtime/harness
 
-# Bake the agent implementations at /agents/<name>. Each agent dir's SKILL.md
-# frontmatter is its definition; AGENT_PATH selects which one runs.
-COPY agents /agents
-RUN chmod +x /agents/*/scripts/*.sh 2>/dev/null || true
-
 # Allowed-value config is mounted at runtime (ConfigMap); create the mount dir.
-RUN mkdir -p /etc/triage \
+# /agents is created+owned here so the final agent layer can COPY into it as the
+# non-root user.
+RUN mkdir -p /etc/triage /agents \
  && chown -R triage:triage /app /agents /etc/triage /home/triage
 
 USER triage
 
-# tini → node listener. The listener spawns the configured harness per webhook.
+# tini → node listener. The agent image overrides nothing here; it only adds its
+# one agent dir. The listener spawns the configured harness per webhook.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "runtime/listener/server.js"]

@@ -2,7 +2,8 @@
 
 // In-memory dedupe cache and spawn limiter. State is intentionally in-memory
 // and lost on pod restart (documented caveat) — the stateless self-write marker
-// in gate.js keeps the loop guard working during the cold-start window.
+// in the trigger's loop guard (trigger/jira.js) keeps it working during the
+// cold-start window.
 
 /**
  * TTL dedupe on X-Atlassian-Webhook-Identifier (R8). Floor of 24h so Jira's

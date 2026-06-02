@@ -51,12 +51,14 @@ the same regardless of the three choices.
 
 | Component | Path | Role |
 |---|---|---|
-| **Listener (runner)** | `agent/runtime/listener/server.js` | Generic I/O shell. Per request: `trigger.authenticate` → parse → dedupe → `trigger.decide` (gate) → spend limiter → ack fast → spawn the harness with the agent's rendered prompt. Owns the per-run lifecycle invariants. Zero third-party deps. |
+| **Listener (HTTP shell)** | `agent/runtime/listener/server.js` | Generic I/O shell + startup. Per request: `trigger.authenticate` → parse → dedupe → `trigger.decide` (gate) → spend limiter → ack fast → `spawnRun`. Zero third-party deps. |
+| **Runner (run lifecycle)** | `agent/runtime/listener/runner.js` | The per-run invariants in one place: render prompt → spawn harness child → watchdog kill → release the limiter slot exactly once → stream-parse/classify → evict dedupe id on spawn failure. `createRunner(deps)` is what `server.js` calls. |
+| **Auth** | `agent/runtime/listener/auth.js` | Constant-time HMAC + shared-secret verification (trigger-agnostic). |
 | **Agent definition** | `agent/runtime/listener/agent-def.js` + a skill's `SKILL.md` frontmatter | Parses the skill's frontmatter into `{ prompt, loopMarker, authorizedActors, trustTools, model, body }` and renders the prompt template. The skill, not the code, defines the agent. |
 | **Trigger adapters** | `agent/runtime/trigger/` | `index.js` registry (`TRIGGER` env, default `jira`); `jira.js` (webhook/Automation auth + eligibility + loop guard + authz); `generic.js` (signed-POST passthrough). Add an event source with one file. |
-| **Skill** | `agent/agents/jira-triage/` | The default agent: `SKILL.md` (frontmatter + triage rubric + trust boundary) and bundled scripts `jira.sh` (allow-listed Jira writes) and `gitlab.sh` (bounded read-only source access). |
+| **Skill / agent** | `agent/agents/jira-triage/` | The default agent: `SKILL.md` (frontmatter + triage rubric + trust boundary), bundled scripts `jira.sh` / `gitlab.sh`, and its own `Dockerfile`. One dir per agent. |
 | **Harness adapters** | `agent/runtime/harness/` | Pluggable coding-agent CLIs (`HARNESS` env; default `pi`; `kiro-cli` + `opencode` built in). Each owns argv + result-reading. Skill-less harnesses share `inline-skill.js`. Contract is subprocess-shaped (spawn-per-ticket) — see the [harness README](../../agent/runtime/harness/README.md). |
-| **Image** | `agent/deploy/docker/` | Shared `base.Dockerfile` (runtime + agents) + one Dockerfile per harness (`pi`/`kiro`/`opencode`) built FROM it. `make triage-image HARNESS=<name>`. |
+| **Image** | `agent/deploy/docker/` + `agent/agents/<name>/Dockerfile` | Three agent-blank-until-last layers: `base.Dockerfile` (engine only) → `<harness>.Dockerfile` (+ CLI) → the agent's own Dockerfile (+ one agent). `make triage-image AGENT=<name> HARNESS=<name>`. |
 | **Manifests** | `agent/deploy/k8s/` | Namespace + IRSA ServiceAccount, listener Deployment + dedicated LoadBalancer, NetworkPolicy (ingress + egress allowlist), ConfigMap/Secret. |
 | **Cloud deps** | `agent/deploy/terraform/` | Bedrock IRSA role (scoped to one model) + optional CloudFront for a domain-free HTTPS webhook endpoint. |
 

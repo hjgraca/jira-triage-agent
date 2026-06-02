@@ -9,11 +9,11 @@
 // per-run lifecycle invariants.
 
 const http = require('http');
-const { spawn } = require('child_process');
 const { DedupeCache, SpawnLimiter } = require('./limits');
 const { getAdapter } = require('../harness');
 const { getTrigger } = require('../trigger');
-const { loadAgentDef, renderPrompt } = require('./agent-def');
+const { loadAgentDef } = require('./agent-def');
+const { createRunner } = require('./runner');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || '/jira-webhook';
@@ -89,77 +89,20 @@ function readRawBody(req, limitBytes = 256 * 1024) {
 // Tracks live children so SIGTERM can signal them on shutdown.
 const liveChildren = new Set();
 
-function spawnRun(vars, dedupeId, label) {
-  // One-shot run via the active harness adapter. The PROMPT comes from the agent
-  // definition (skill frontmatter), rendered with this trigger's variables —
-  // the skill, not this code, decides what the agent does. The adapter owns the
-  // argv + (for streaming harnesses) stdout parsing; this shell owns the
-  // lifecycle (limiter slot, watchdog, dedupe-evict on spawn failure) so those
-  // invariants hold no matter which trigger/agent/harness is plugged in.
-  const prompt = renderPrompt(agentDef.prompt, vars);
-  const cmd = harness.buildCommand({
-    vars,
-    skillPath: SKILL_PATH,
-    model: RUN_MODEL,
-    prompt,
-    trustTools: agentDef.trustTools,
-  });
-  const child = spawn(cmd.bin, cmd.args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    // Merge any adapter-declared env onto the inherited process env (IRSA vars,
-    // KIRO_API_KEY, etc. are already in process.env from the pod spec).
-    env: cmd.env ? { ...process.env, ...cmd.env } : process.env,
-  });
-  liveChildren.add(child);
-
-  // Per-run accumulator the adapter mutates via interpret()/reads in finalize().
-  const runState = {};
-
-  // Release the limiter slot EXACTLY once: a failed spawn emits both 'error'
-  // and 'close', so guarding with a flag prevents a double-release that would
-  // corrupt the concurrency count and defeat the R10c storm/loop defense.
-  let released = false;
-  const releaseOnce = () => {
-    if (released) return;
-    released = true;
-    clearTimeout(watchdog);
-    liveChildren.delete(child);
-    limiter.release();
-  };
-
-  // Watchdog: a hung run (model slow/unreachable, harness stuck) emits neither
-  // 'close' nor 'error', so without this the slot leaks forever and enough
-  // stuck runs silently wedge all triage. SIGTERM then SIGKILL after a grace.
-  const watchdog = setTimeout(() => {
-    log({ msg: 'run_timeout', label, harness: HARNESS_NAME, timeoutMs: RUN_TIMEOUT_MS });
-    child.kill('SIGTERM');
-    setTimeout(() => child.kill('SIGKILL'), 10_000).unref();
-  }, RUN_TIMEOUT_MS);
-  watchdog.unref();
-
-  // Streaming harnesses parse stdout line-by-line; non-streaming ones omit
-  // interpret() and are classified from the exit code in finalize(). Never log
-  // full payloads (ticket bodies carry PII).
-  if (typeof harness.interpret === 'function') {
-    child.stdout.on('data', (buf) => {
-      for (const line of buf.toString().split('\n')) harness.interpret(line, runState);
-    });
-  }
-  child.on('close', (code) => {
-    releaseOnce();
-    // Streaming harnesses can report a clean terminal event (e.g. pi's
-    // agent_end); log it for parity with the pre-adapter behavior.
-    if (runState.agentEnded) log({ msg: 'run_done', label, harness: HARNESS_NAME });
-    const { toolError } = harness.finalize(code, runState);
-    log({ msg: 'run_exit', label, harness: HARNESS_NAME, code, toolError });
-  });
-  child.on('error', (err) => {
-    releaseOnce();
-    // The run never happened — let the trigger's redelivery of this id retry.
-    dedupe.evict(dedupeId);
-    log({ msg: 'run_spawn_error', label, harness: HARNESS_NAME, error: err.message });
-  });
-}
+// The per-run lifecycle (spawn → watchdog → release → classify) lives in
+// runner.js; this shell only wires auth → gate → spawnRun.
+const spawnRun = createRunner({
+  harness,
+  harnessName: HARNESS_NAME,
+  agentDef,
+  skillPath: SKILL_PATH,
+  model: RUN_MODEL,
+  limiter,
+  dedupe,
+  liveChildren,
+  log,
+  timeoutMs: RUN_TIMEOUT_MS,
+});
 
 // Pick a short human label for logs from the trigger's vars (e.g. the Jira key)
 // without dumping the whole vars object (PII hygiene).
