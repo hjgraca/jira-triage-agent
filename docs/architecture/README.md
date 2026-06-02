@@ -8,7 +8,7 @@ The same **agent** runs in two deployment shapes:
 - **Workshop** — a self-contained lab: EKS + self-hosted GitLab + the agent, all
   built by `workshop/terraform` and the `Makefile`.
 - **Customer** — the agent only, installed into a cluster the customer already
-  runs, against their existing GitLab/Jira. Built by `agent/terraform` + `agent/k8s`.
+  runs, against their existing GitLab/Jira. Built by `agent/deploy/terraform` + `agent/deploy/k8s`.
 
 The agent's internals (listener, skill, guardrails) are identical in both; only
 what surrounds it differs.
@@ -35,7 +35,7 @@ independently-pluggable pieces, so you change behavior by configuration, not cod
 
 - **The skill drives the agent.** `SKILL.md`'s YAML frontmatter (`prompt`,
   `loopMarker`, `authorizedActors`, `trustTools`, `model`) IS the agent
-  definition — see [agent-def.js](../../agent/listener/src/agent-def.js). Point
+  definition — see [agent-def.js](../../agent/runtime/listener/agent-def.js). Point
   `AGENT_PATH` at a different skill → a different agent, no code change. The
   prompt is a template; `{{vars}}` are filled from the trigger.
 - **The trigger feeds it.** `TRIGGER` selects how the webhook is authenticated,
@@ -51,14 +51,14 @@ the same regardless of the three choices.
 
 | Component | Path | Role |
 |---|---|---|
-| **Listener (runner)** | `agent/listener/src/server.js` | Generic I/O shell. Per request: `trigger.authenticate` → parse → dedupe → `trigger.decide` (gate) → spend limiter → ack fast → spawn the harness with the agent's rendered prompt. Owns the per-run lifecycle invariants. Zero third-party deps. |
-| **Agent definition** | `agent/listener/src/agent-def.js` + a skill's `SKILL.md` frontmatter | Parses the skill's frontmatter into `{ prompt, loopMarker, authorizedActors, trustTools, model, body }` and renders the prompt template. The skill, not the code, defines the agent. |
-| **Trigger adapters** | `agent/listener/src/trigger/` | `index.js` registry (`TRIGGER` env, default `jira`); `jira.js` (webhook/Automation auth + eligibility + loop guard + authz); `generic.js` (signed-POST passthrough). Add an event source with one file. |
-| **Skill** | `agent/skills/jira-triage/` | The default agent: `SKILL.md` (frontmatter + triage rubric + trust boundary) and bundled scripts `jira.sh` (allow-listed Jira writes) and `gitlab.sh` (bounded read-only source access). |
-| **Harness adapters** | `agent/listener/src/harness/` | Pluggable coding-agent CLIs (`HARNESS` env; default `pi`; `kiro-cli` + `opencode` built in). Each owns argv + result-reading. Skill-less harnesses share `inline-skill.js`. Contract is subprocess-shaped (spawn-per-ticket) — see the [harness README](../../agent/listener/src/harness/README.md). |
-| **Image** | `agent/docker/triage/Dockerfile` | `tini` → Node listener; bakes in the selected harness(es) via build args + the skill. |
-| **Manifests** | `agent/k8s/` | Namespace + IRSA ServiceAccount, listener Deployment + dedicated LoadBalancer, NetworkPolicy (ingress + egress allowlist), ConfigMap/Secret. |
-| **Cloud deps** | `agent/terraform/` | Bedrock IRSA role (scoped to one model) + optional CloudFront for a domain-free HTTPS webhook endpoint. |
+| **Listener (runner)** | `agent/runtime/listener/server.js` | Generic I/O shell. Per request: `trigger.authenticate` → parse → dedupe → `trigger.decide` (gate) → spend limiter → ack fast → spawn the harness with the agent's rendered prompt. Owns the per-run lifecycle invariants. Zero third-party deps. |
+| **Agent definition** | `agent/runtime/listener/agent-def.js` + a skill's `SKILL.md` frontmatter | Parses the skill's frontmatter into `{ prompt, loopMarker, authorizedActors, trustTools, model, body }` and renders the prompt template. The skill, not the code, defines the agent. |
+| **Trigger adapters** | `agent/runtime/trigger/` | `index.js` registry (`TRIGGER` env, default `jira`); `jira.js` (webhook/Automation auth + eligibility + loop guard + authz); `generic.js` (signed-POST passthrough). Add an event source with one file. |
+| **Skill** | `agent/agents/jira-triage/` | The default agent: `SKILL.md` (frontmatter + triage rubric + trust boundary) and bundled scripts `jira.sh` (allow-listed Jira writes) and `gitlab.sh` (bounded read-only source access). |
+| **Harness adapters** | `agent/runtime/harness/` | Pluggable coding-agent CLIs (`HARNESS` env; default `pi`; `kiro-cli` + `opencode` built in). Each owns argv + result-reading. Skill-less harnesses share `inline-skill.js`. Contract is subprocess-shaped (spawn-per-ticket) — see the [harness README](../../agent/runtime/harness/README.md). |
+| **Image** | `agent/deploy/docker/` | Shared `base.Dockerfile` (runtime + agents) + one Dockerfile per harness (`pi`/`kiro`/`opencode`) built FROM it. `make triage-image HARNESS=<name>`. |
+| **Manifests** | `agent/deploy/k8s/` | Namespace + IRSA ServiceAccount, listener Deployment + dedicated LoadBalancer, NetworkPolicy (ingress + egress allowlist), ConfigMap/Secret. |
+| **Cloud deps** | `agent/deploy/terraform/` | Bedrock IRSA role (scoped to one model) + optional CloudFront for a domain-free HTTPS webhook endpoint. |
 
 ---
 

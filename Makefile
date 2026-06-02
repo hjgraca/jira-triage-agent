@@ -3,7 +3,7 @@
 ## This Makefile builds the full LAB (workshop/terraform + GitLab + the agent),
 ## used to develop and demo the agent end to end. To install ONLY the agent into
 ## a customer's existing cluster, do NOT use this — follow docs/customer-install/
-## (which uses agent/terraform + agent/k8s against their own cluster).
+## (which uses agent/deploy/terraform + agent/deploy/k8s against their own cluster).
 ##
 ## Usage:
 ##   make cluster        # provision VPC + EKS via Terraform (workshop/terraform)
@@ -24,10 +24,14 @@ TF_DIR         := workshop/terraform
 GITLAB_CHART_VERSION ?= 8.11.8
 
 # Triage agent image. Pushed to ECR in the cluster's account/region.
+# HARNESS selects which per-harness Dockerfile to build (pi|kiro|opencode); all
+# build FROM a shared base (deploy/docker/base.Dockerfile).
 TRIAGE_ECR_REPO ?= triage-agent
 TRIAGE_IMAGE_TAG ?= latest
+HARNESS ?= pi
 ACCOUNT_ID = $(shell aws sts get-caller-identity --query Account --output text)
 TRIAGE_IMAGE = $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(TRIAGE_ECR_REPO):$(TRIAGE_IMAGE_TAG)
+TRIAGE_BASE_TAG := triage-base:local
 
 .PHONY: cluster kubeconfig apps up gitlab triage triage-image destroy clean-k8s-lb
 
@@ -54,37 +58,43 @@ gitlab:
 	# source range in this manifest when your public IP changes.
 	kubectl apply -f workshop/k8s/gitlab-shell-ssh-lb.yaml
 
-## Build and push the triage agent image (listener + pi + jira-triage skill).
+## Build and push the triage agent image for HARNESS (default pi).
+## Builds the shared base (runtime + agents) once, then the per-harness image
+## FROM it. Override the harness: `make triage-image HARNESS=kiro`.
 ## Creates the ECR repo if absent, logs in, builds, and pushes.
 triage-image:
 	aws ecr describe-repositories --region $(REGION) --repository-names $(TRIAGE_ECR_REPO) >/dev/null 2>&1 \
 		|| aws ecr create-repository --region $(REGION) --repository-name $(TRIAGE_ECR_REPO) >/dev/null
 	aws ecr get-login-password --region $(REGION) \
 		| docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
-	# Pin linux/amd64 to match the EKS node arch (m5 = x86_64). Building native
-	# on an arm64 Mac otherwise yields an image the nodes can't exec.
-	# Build context is agent/ — the Dockerfile COPYs listener/ + skills/ from there.
-	docker buildx build --platform linux/amd64 -f agent/docker/triage/Dockerfile -t $(TRIAGE_IMAGE) --push agent
-	@echo "Pushed $(TRIAGE_IMAGE) (linux/amd64)"
+	# Pin linux/amd64 to match the EKS node arch (m5 = x86_64). Build context is
+	# agent/. Base first (listener + trigger + harness + agents), then the
+	# selected harness FROM it.
+	docker buildx build --platform linux/amd64 \
+		-f agent/deploy/docker/base.Dockerfile -t $(TRIAGE_BASE_TAG) --load agent
+	docker buildx build --platform linux/amd64 \
+		-f agent/deploy/docker/$(HARNESS).Dockerfile --build-arg BASE=$(TRIAGE_BASE_TAG) \
+		-t $(TRIAGE_IMAGE) --push agent
+	@echo "Pushed $(TRIAGE_IMAGE) (harness=$(HARNESS), linux/amd64)"
 
 ## Deploy the Jira triage agent. Applies namespace/SA, config, secrets,
 ## NetworkPolicy, and the listener (Deployment + dedicated LoadBalancer).
 ## Prerequisites the operator must do first (see docs/customer-install/):
 ##   - `make triage-image` to build/push the image, then set <TRIAGE_IMAGE> in
-##     agent/k8s/triage-listener.yaml
-##   - set the IRSA role ARN in agent/k8s/triage-namespace.yaml
-##   - create agent/k8s/triage-{secrets,config}.yaml from the .example templates
-##   - set AUTHORIZED_ACTORS + JIRA_BASE_URL in agent/k8s/triage-listener.yaml
+##     agent/deploy/k8s/triage-listener.yaml
+##   - set the IRSA role ARN in agent/deploy/k8s/triage-namespace.yaml
+##   - create agent/deploy/k8s/triage-{secrets,config}.yaml from the .example templates
+##   - set AUTHORIZED_ACTORS + JIRA_BASE_URL in agent/deploy/k8s/triage-listener.yaml
 triage:
-	@if [ ! -f agent/k8s/triage-secrets.yaml ] || [ ! -f agent/k8s/triage-config.yaml ]; then \
-		echo "Skipping triage: create agent/k8s/triage-secrets.yaml and agent/k8s/triage-config.yaml"; \
+	@if [ ! -f agent/deploy/k8s/triage-secrets.yaml ] || [ ! -f agent/deploy/k8s/triage-config.yaml ]; then \
+		echo "Skipping triage: create agent/deploy/k8s/triage-secrets.yaml and agent/deploy/k8s/triage-config.yaml"; \
 		echo "from the .example templates first (see docs/customer-install/). Then: make triage"; \
 	else \
-		kubectl apply -f agent/k8s/triage-namespace.yaml; \
-		kubectl apply -f agent/k8s/triage-config.yaml; \
-		kubectl apply -f agent/k8s/triage-secrets.yaml; \
-		kubectl apply -f agent/k8s/triage-netpol.yaml; \
-		kubectl apply -f agent/k8s/triage-listener.yaml; \
+		kubectl apply -f agent/deploy/k8s/triage-namespace.yaml; \
+		kubectl apply -f agent/deploy/k8s/triage-config.yaml; \
+		kubectl apply -f agent/deploy/k8s/triage-secrets.yaml; \
+		kubectl apply -f agent/deploy/k8s/triage-netpol.yaml; \
+		kubectl apply -f agent/deploy/k8s/triage-listener.yaml; \
 		echo "Triage listener applied. Get its LB hostname for CloudFront:"; \
 		echo "  kubectl get svc -n triage triage-listener -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"; \
 	fi

@@ -12,11 +12,11 @@ process.env.AUTOMATION_SHARED_SECRET = 'c'.repeat(48);
 process.env.AUTHORIZED_ACTORS = 'ALLOWED-1';
 process.env.PI_BIN = '/usr/bin/true'; // spawning this exits 0 immediately, no real pi
 // The agent definition is the real jira-triage skill (its SKILL.md frontmatter).
-process.env.AGENT_PATH = path.join(__dirname, '..', '..', 'skills', 'jira-triage');
+process.env.AGENT_PATH = path.join(__dirname, '..', '..', 'agents', 'jira-triage');
 
 const SECRET = process.env.WEBHOOK_HMAC_SECRET;
 const AUTOMATION_SECRET = process.env.AUTOMATION_SHARED_SECRET;
-const { createServer, state, limiter } = require('../src/server');
+const { createServer, state, limiter } = require('../listener/server');
 
 let server;
 let port;
@@ -183,7 +183,7 @@ test('spawn lifecycle releases the limiter slot (active drains to 0)', async () 
 
 test('loop marker comes from the agent definition (SKILL.md frontmatter)', () => {
   // The runtime loop-guard marker is now sourced from the skill, not hardcoded.
-  const { loadAgentDef } = require('../src/agent-def');
+  const { loadAgentDef } = require('../listener/agent-def');
   const def = loadAgentDef(process.env.AGENT_PATH);
   assert.ok(typeof def.loopMarker === 'string' && def.loopMarker.length > 0);
   assert.strictEqual(state.loopMarker, def.loopMarker);

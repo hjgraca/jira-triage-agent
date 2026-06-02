@@ -95,11 +95,12 @@ added as such rather than bent into `buildCommand`.
    const myHarness = require('./my-harness');
    const ADAPTERS = { pi, 'kiro-cli': kiroCli, 'my-harness': myHarness };
    ```
-3. Install the CLI in the image (`agent/docker/triage/Dockerfile` — add a build
-   arg + install step like the kiro one).
-4. Set `HARNESS=my-harness` in `agent/k8s/triage-listener.yaml`, plus any secret
+3. Add `agent/deploy/docker/my-harness.Dockerfile` that builds `FROM ${BASE}` and
+   installs your CLI (copy `kiro.Dockerfile` as a template — install as root,
+   relocate onto `/usr/local/bin`, drop back to `USER triage`).
+4. Set `HARNESS=my-harness` in `agent/deploy/k8s/triage-listener.yaml`, plus any secret
    it needs (wire it as an env, `optional: true` if other harnesses don't use it).
-5. Add unit tests in `agent/listener/test/harness.test.js` (argv shape +
+5. Add unit tests in `agent/runtime/test/harness.test.js` (argv shape +
    `finalize` on representative exit codes).
 
 The registry **throws on an unknown `HARNESS`**, so a typo fails fast at startup

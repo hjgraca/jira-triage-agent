@@ -1,24 +1,36 @@
-# agent/ — the shippable Jira triage agent
+# agent/ — the shippable agent runner
 
-This directory is the **complete, self-contained unit** deployed into a
-Kubernetes cluster. Nothing under `workshop/` is required to run it.
+The **complete, self-contained unit** deployed into a Kubernetes cluster.
+Nothing under `workshop/` is required to run it. It's organized as three concerns:
 
 ```
-listener/                Node HTTP listener (zero deps): auth, gating, spawns harness runs
-  src/{server,gate,limits}.js
-  src/harness/           pluggable harness adapters (pi, kiro-cli, + your own) — see its README
-  test/                  node:test suite (run: cd listener && node --test)
-skills/jira-triage/      harness-neutral skill: SKILL.md rubric + jira.sh / gitlab.sh
-docker/triage/Dockerfile linux/amd64 image (listener + chosen harness + skill); context is THIS dir
-k8s/                     namespace/SA, listener Deployment+LB, NetworkPolicy, config/secret
-terraform/               standalone IRSA + optional CloudFront for an EXISTING cluster
+runtime/                 THE ENGINE — generic trigger × agent × harness runner
+  listener/              server.js + agent-def.js + auth.js + limits.js + gate.js
+  trigger/               trigger adapters (jira, generic, + your own)
+  harness/               harness adapters (pi, kiro-cli, opencode, + your own)
+  test/                  node:test suite  (run: cd runtime && node --test)
+
+agents/                  THE IMPLEMENTATIONS — one dir per agent
+  jira-triage/           SKILL.md (frontmatter = agent def + rubric) + scripts/
+  <your-agent>/          ← a code-review agent goes HERE, as its own dir
+
+deploy/                  HOW IT SHIPS
+  docker/                base.Dockerfile + pi/kiro/opencode .Dockerfiles
+  k8s/                   namespace/SA, listener Deployment+LB, NetworkPolicy, config/secret
+  terraform/             standalone IRSA + optional CloudFront for an EXISTING cluster
 ```
 
-**Pluggable harness:** the listener spawns whichever coding-agent CLI `HARNESS`
-names (default `pi`; `kiro-cli` and `opencode` built in). Swapping it changes
-only one adapter file under `listener/src/harness/` — the gate, limits, and skill
-are unchanged.
-See [listener/src/harness/README.md](listener/src/harness/README.md) and
+**Where does a new agent (e.g. code-review) go?** A new directory under
+`agents/`, with its own `SKILL.md` whose frontmatter declares the prompt that
+drives it. No engine code changes — point `AGENT_PATH` at it. See
+[../docs/customer-install/07-authoring-agents.md](../docs/customer-install/07-authoring-agents.md).
+
+**Three pluggable axes** (all default to jira / jira-triage / pi):
+- **trigger** (`TRIGGER` env) — how the webhook is authed/parsed/gated.
+- **agent** (`AGENT_PATH`) — *what the agent is*, defined by a dir under `agents/`.
+- **harness** (`HARNESS` env) — which coding-agent CLI runs the prompt.
+
+See [runtime/harness/README.md](runtime/harness/README.md) and
 [../docs/customer-install/03b-choose-harness.md](../docs/customer-install/03b-choose-harness.md).
 
 ## Install
@@ -29,16 +41,19 @@ Short version:
 
 ```bash
 # 1. cloud deps (against your existing cluster's OIDC provider)
-cd agent/terraform && cp example.tfvars terraform.tfvars   # edit, then:
+cd agent/deploy/terraform && cp example.tfvars terraform.tfvars   # edit, then:
 terraform init && terraform apply
 
-# 2. image
-docker buildx build --platform linux/amd64 -f agent/docker/triage/Dockerfile \
+# 2. image — shared base, then the harness you want
+docker buildx build --platform linux/amd64 \
+  -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
+docker buildx build --platform linux/amd64 \
+  -f agent/deploy/docker/pi.Dockerfile --build-arg BASE=triage-base:local \
   -t <repo>/triage-agent:latest --push agent
 
 # 3. config + secrets (fill the .example templates), set the SA role ARN,
 #    image, JIRA_BASE_URL, GITLAB_BASE_URL, AUTHORIZED_ACTORS, then:
-kubectl apply -f agent/k8s/
+kubectl apply -f agent/deploy/k8s/
 
 # 4. wire CloudFront + register the Jira trigger (see the install guide)
 ```
@@ -46,8 +61,8 @@ kubectl apply -f agent/k8s/
 ## Build / test
 
 ```bash
-cd agent/listener && node --test     # listener unit + integration tests
-bash agent/skills/jira-triage/tests/run.sh   # skill script tests
+cd agent/runtime && node --test              # runtime unit + integration tests
+bash agent/agents/jira-triage/tests/run.sh   # skill script tests
 ```
 
 See [../docs/architecture/](../docs/architecture/) for how the pieces fit and the

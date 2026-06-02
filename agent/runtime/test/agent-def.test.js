@@ -12,7 +12,7 @@ const {
   splitFrontmatter,
   parseFrontmatter,
   _resetCache,
-} = require('../src/agent-def');
+} = require('../listener/agent-def');
 
 function withSkill(contents, fn) {
   _resetCache();

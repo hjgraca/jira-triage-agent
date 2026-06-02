@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Webhook listener that gates Jira Cloud webhooks and spawns one-shot pi triage runs.",
-  "main": "src/server.js",
+  "main": "listener/server.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node listener/server.js",
     "test": "node --test"
   },
   "engines": {

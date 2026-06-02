@@ -9,8 +9,8 @@ const {
   triageLabelAdded,
   decide,
   AUTOMATION_LABEL_EVENT,
-} = require('../src/gate');
-const { DedupeCache, SpawnLimiter } = require('../src/limits');
+} = require('../listener/gate');
+const { DedupeCache, SpawnLimiter } = require('../listener/limits');
 
 const SECRET = 'a'.repeat(64);
 function sign(body, secret = SECRET) {

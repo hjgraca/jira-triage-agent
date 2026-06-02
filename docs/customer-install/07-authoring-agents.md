@@ -18,7 +18,7 @@ skills/<your-agent>/
 ```
 
 `SKILL.md` frontmatter fields (read by
-[agent-def.js](../../agent/listener/src/agent-def.js)):
+[agent-def.js](../../agent/runtime/listener/agent-def.js)):
 
 ```yaml
 ---
@@ -84,7 +84,7 @@ listener, same guardrails, different agent.
 The generic trigger passes `vars` straight to the prompt template — no
 Jira-specific parsing. For a non-trivial event source (GitHub webhooks with
 their own signature + payload shape), write a trigger adapter instead — see
-[trigger adapters](../../agent/listener/src/trigger/index.js) and the harness
+[trigger adapters](../../agent/runtime/trigger/index.js) and the harness
 README's "add your own" pattern (triggers follow the same shape).
 
 ## What stays fixed no matter the agent

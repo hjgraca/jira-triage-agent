@@ -15,8 +15,8 @@ crash.log
 kubeconfig
 
 # Real triage secrets + config (only the .example templates are committed)
-agent/k8s/triage-secrets.yaml
-agent/k8s/triage-config.yaml
+agent/deploy/k8s/triage-secrets.yaml
+agent/deploy/k8s/triage-config.yaml
 
 # macOS junk
 .DS_Store
@@ -24,11 +24,11 @@ agent/k8s/triage-config.yaml
 # Local HLD working doc (author-managed, kept out of git)
 docs/hld/
 
-# Terraform state — never commit. The customer applies agent/terraform in their
+# Terraform state — never commit. The customer applies agent/deploy/terraform in their
 # own account/backend; the workshop module holds the lab's live state locally.
 workshop/terraform/*.tfstate
 workshop/terraform/*.tfstate.*
-agent/terraform/.terraform/
-agent/terraform/*.tfstate
-agent/terraform/*.tfstate.*
-agent/terraform/terraform.tfvars
+agent/deploy/terraform/.terraform/
+agent/deploy/terraform/*.tfstate
+agent/deploy/terraform/*.tfstate.*
+agent/deploy/terraform/terraform.tfvars

@@ -55,11 +55,11 @@ schedule (≤90 days). For each:
 
 1. Revoke the old credential at the source (Jira/GitLab).
 2. Generate the new one.
-3. Update `agent/k8s/triage-secrets.yaml` (and, for the **HMAC** path, the Jira
+3. Update `agent/deploy/k8s/triage-secrets.yaml` (and, for the **HMAC** path, the Jira
    system-webhook secret to match).
 4. Apply and roll:
    ```bash
-   kubectl apply -f agent/k8s/triage-secrets.yaml
+   kubectl apply -f agent/deploy/k8s/triage-secrets.yaml
    kubectl -n triage rollout restart deploy/triage-listener
    ```
 
@@ -68,7 +68,7 @@ If a token ever appears in logs, treat it as compromised and rotate immediately.
 ## Cost control
 
 Each accepted webhook spawns a billable Bedrock run. Three bounds, all on the
-listener (env in `agent/k8s/triage-listener.yaml`):
+listener (env in `agent/deploy/k8s/triage-listener.yaml`):
 
 | Knob | Default | Bounds |
 |---|---|---|

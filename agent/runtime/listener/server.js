@@ -11,8 +11,8 @@
 const http = require('http');
 const { spawn } = require('child_process');
 const { DedupeCache, SpawnLimiter } = require('./limits');
-const { getAdapter } = require('./harness');
-const { getTrigger } = require('./trigger');
+const { getAdapter } = require('../harness');
+const { getTrigger } = require('../trigger');
 const { loadAgentDef, renderPrompt } = require('./agent-def');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
@@ -29,7 +29,7 @@ const AUTOMATION_SECRET = process.env.AUTOMATION_SHARED_SECRET || '';
 //              IS the agent definition (its prompt drives what the agent does).
 const { name: TRIGGER_NAME, trigger } = getTrigger(process.env.TRIGGER);
 const { name: HARNESS_NAME, adapter: harness } = getAdapter(process.env.HARNESS);
-const SKILL_PATH = process.env.AGENT_PATH || process.env.SKILL_PATH || '/skills/jira-triage';
+const SKILL_PATH = process.env.AGENT_PATH || process.env.SKILL_PATH || '/agents/jira-triage';
 const agentDef = loadAgentDef(SKILL_PATH);
 
 // Model precedence: explicit env wins, else the agent definition, else default.

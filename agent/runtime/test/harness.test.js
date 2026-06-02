@@ -6,15 +6,15 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { getAdapter } = require('../src/harness');
-const pi = require('../src/harness/pi');
-const kiro = require('../src/harness/kiro-cli');
-const opencode = require('../src/harness/opencode');
-const { composeInlineSkillPrompt, _resetCache } = require('../src/harness/inline-skill');
+const { getAdapter } = require('../harness');
+const pi = require('../harness/pi');
+const kiro = require('../harness/kiro-cli');
+const opencode = require('../harness/opencode');
+const { composeInlineSkillPrompt, _resetCache } = require('../harness/inline-skill');
 
 const CTX = {
   key: 'KAN-9',
-  skillPath: '/skills/jira-triage',
+  skillPath: '/agents/jira-triage',
   model: 'us.anthropic.claude-sonnet-4-6',
   prompt: 'Triage Jira issue KAN-9 using the jira-triage skill. Act on exactly this one ticket, then stop.',
 };
@@ -42,7 +42,7 @@ test('pi.buildCommand emits the streaming-JSON + skill argv', () => {
     '--mode', 'json',
     '--provider', 'amazon-bedrock',
     '--model', 'us.anthropic.claude-sonnet-4-6',
-    '--skill', '/skills/jira-triage',
+    '--skill', '/agents/jira-triage',
     CTX.prompt,
   ]);
   assert.ok(cmd.env === undefined, 'pi adds no env (IRSA supplies creds)');

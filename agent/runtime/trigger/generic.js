@@ -15,7 +15,7 @@
 //   { "vars": { ... }, "dedupeId"?: "..." }   // vars become {{...}} in the prompt
 // or any flat JSON object, which is used directly as vars.
 
-const { verifySignature, verifySharedSecret } = require('../auth');
+const { verifySignature, verifySharedSecret } = require('../listener/auth');
 
 const TOKEN_HEADER = process.env.GENERIC_TOKEN_HEADER || 'x-triage-token';
 
