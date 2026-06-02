@@ -31,37 +31,43 @@ result-reading differ — that's the whole point of the adapter layer.
 > it matches the one-ephemeral-run-per-webhook security model; a persistent
 > server would be a different integration shape. If you want warm starts,
 > `opencode run --attach http://host:port` can front a `serve` daemon without
-> changing the adapter. See [harness README](../../agent/listener/src/harness/README.md#boundary-this-contract-is-subprocess-shaped).
+> changing the adapter. See [harness README](../../agent/runtime/harness/README.md#boundary-this-contract-is-subprocess-shaped).
 
 ## How to select
 
-Set `HARNESS` in `agent/k8s/triage-listener.yaml`:
+Set `HARNESS` in `agent/deploy/k8s/triage-listener.yaml`:
 
 ```yaml
 - name: HARNESS
   value: "pi"        # or "kiro-cli"
 ```
 
-…and make sure the image has that harness baked in (build args, below), and the
-required credential is present.
+…and make sure the image is built from that harness's Dockerfile (each harness
+has its own under `agent/deploy/docker/`, all built FROM a shared `base.Dockerfile`),
+and the required credential is present. The simplest path is `make triage-image
+HARNESS=<name>`; the raw two-step build is shown per harness below.
 
 ### Using pi (default)
 
-- **Image:** `--build-arg INSTALL_PI=true` (the default).
+- **Image:** `make triage-image HARNESS=pi` (or build `base.Dockerfile` then
+  `pi.Dockerfile`).
 - **Credential:** none in the pod — the IRSA ServiceAccount supplies Bedrock
-  access. Make sure `agent/terraform`'s `bedrock_model_id` matches `TRIAGE_MODEL`.
+  access. Make sure `agent/deploy/terraform`'s `bedrock_model_id` matches `TRIAGE_MODEL`.
 - Nothing else to do; this is the path proven end-to-end in the workshop.
 
 ### Using kiro-cli
 
 1. **Build the image with kiro:**
    ```bash
+   make triage-image HARNESS=kiro
+   # or, raw: build the base, then the kiro image FROM it
    docker buildx build --platform linux/amd64 \
-     --build-arg INSTALL_KIRO=true \
-     -f agent/docker/triage/Dockerfile -t "$REPO:latest" --push agent
+     -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
+   docker buildx build --platform linux/amd64 \
+     -f agent/deploy/docker/kiro.Dockerfile --build-arg BASE=triage-base:local \
+     -t "$REPO:latest" --push agent
    ```
-   (Set `--build-arg INSTALL_PI=false` if you don't also want pi.)
-2. **Add the API key** to `agent/k8s/triage-secrets.yaml`:
+2. **Add the API key** to `agent/deploy/k8s/triage-secrets.yaml`:
    ```yaml
    kiro-api-key: "ksk_xxxxxxxx"   # from https://app.kiro.dev
    ```
@@ -82,12 +88,15 @@ required credential is present.
 
 1. **Build the image with opencode:**
    ```bash
+   make triage-image HARNESS=opencode
+   # or, raw:
    docker buildx build --platform linux/amd64 \
-     --build-arg INSTALL_OPENCODE=true \
-     -f agent/docker/triage/Dockerfile -t "$REPO:latest" --push agent
+     -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
+   docker buildx build --platform linux/amd64 \
+     -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=triage-base:local \
+     -t "$REPO:latest" --push agent
    ```
-   (Set `--build-arg INSTALL_PI=false` if you don't also want pi.)
-2. **Add the provider key** to `agent/k8s/triage-secrets.yaml`:
+2. **Add the provider key** to `agent/deploy/k8s/triage-secrets.yaml`:
    ```yaml
    opencode-provider-key: "<your provider API key>"   # e.g. an Anthropic key
    ```
@@ -107,9 +116,9 @@ required credential is present.
 
 ## Bring your own harness
 
-The listener selects adapters from `agent/listener/src/harness/`. To support a
+The listener selects adapters from `agent/runtime/harness/`. To support a
 different CLI, drop in one adapter file (`buildCommand` + optional `interpret` +
 `finalize`), register it, install it in the Dockerfile, and set `HARNESS` to its
-name. Full guide: **[agent/listener/src/harness/README.md](../../agent/listener/src/harness/README.md)**.
+name. Full guide: **[agent/runtime/harness/README.md](../../agent/runtime/harness/README.md)**.
 
 Next → [Deploy the agent](04-deploy-agent.md)

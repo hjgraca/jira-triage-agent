@@ -4,9 +4,9 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
 
-const { getTrigger } = require('../src/trigger');
-const jira = require('../src/trigger/jira');
-const generic = require('../src/trigger/generic');
+const { getTrigger } = require('../trigger');
+const jira = require('../trigger/jira');
+const generic = require('../trigger/generic');
 
 const HMAC = 'a'.repeat(64);
 const SHARED = 's'.repeat(40);

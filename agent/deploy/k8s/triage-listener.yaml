@@ -65,7 +65,7 @@ spec:
             # (as long as the image bakes that skill in). SKILL_PATH is a
             # back-compat alias.
             - name: AGENT_PATH
-              value: "/skills/jira-triage"
+              value: "/agents/jira-triage"
             # Which TRIGGER adapter authenticates/parses/gates the webhook:
             #   "jira"    (default) Jira webhook / Automation rule
             #   "generic" signed POST whose JSON body becomes the prompt vars

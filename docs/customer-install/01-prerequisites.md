@@ -32,7 +32,7 @@ If no provider is listed for that issuer, create one once:
 eksctl utils associate-iam-oidc-provider --cluster "$CLUSTER" --region "$REGION" --approve
 ```
 
-You'll pass the **provider ARN** into `agent/terraform` as `oidc_provider_arn`.
+You'll pass the **provider ARN** into `agent/deploy/terraform` as `oidc_provider_arn`.
 
 ## 2. Amazon Bedrock model access
 
@@ -64,7 +64,7 @@ have no public ingress path, you'll use CloudFront (default in
 CloudFront's origin CIDRs.
 
 > If the cluster enforces NetworkPolicy (AWS VPC CNI with the network-policy
-> controller enabled), the bundled `agent/k8s/triage-netpol.yaml` egress
+> controller enabled), the bundled `agent/deploy/k8s/triage-netpol.yaml` egress
 > allowlist applies. If it does **not** enforce policy, that file is inert — see
 > [Security](06-security.md).
 
@@ -72,8 +72,8 @@ CloudFront's origin CIDRs.
 
 | Tool | Version | Used for |
 |---|---|---|
-| `kubectl` | matching your cluster | applying `agent/k8s` |
-| `terraform` | >= 1.5 | `agent/terraform` (IRSA + CloudFront) |
+| `kubectl` | matching your cluster | applying `agent/deploy/k8s` |
+| `terraform` | >= 1.5 | `agent/deploy/terraform` (IRSA + CloudFront) |
 | `docker` (with `buildx`) | recent | building the `linux/amd64` image |
 | `aws` CLI | v2 | ECR login, EKS describe, terraform auth |
 | `jq`, `curl`, `openssl` | any | secrets, probes, verification |

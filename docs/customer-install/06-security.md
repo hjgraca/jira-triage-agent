@@ -76,7 +76,7 @@ enforces this; comments describe code in prose.
 
 ### Egress fence (R12) — **conditional on your CNI**
 
-`agent/k8s/triage-netpol.yaml` default-denies egress and allows only DNS,
+`agent/deploy/k8s/triage-netpol.yaml` default-denies egress and allows only DNS,
 in-cluster GitLab, and HTTPS. **But** with the AWS VPC CNI this is enforced only
 when the network-policy controller is enabled
 (`ENABLE_NETWORK_POLICY=true` on the `aws-node` add-on).

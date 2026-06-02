@@ -10,7 +10,7 @@
 // registry directly.
 
 const { verifySignature, verifySharedSecret, SIGNATURE_ALGO } = require('./auth');
-const jira = require('./trigger/jira');
+const jira = require('../trigger/jira');
 
 // The triage skill's loop-marker sentinel, kept here for the cross-language
 // substring test that pins jira.sh's disclaimer wording. The runtime value now

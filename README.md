@@ -19,7 +19,7 @@ pieces — **trigger × agent × harness**:
 - **harness** — the coding-agent CLI that runs it:
   [pi.dev](https://github.com/earendil-works/pi) (Bedrock via IRSA),
   [kiro-cli](https://kiro.dev), or [opencode](https://opencode.ai), or bring your
-  own (see [harness adapters](agent/listener/src/harness/README.md)).
+  own (see [harness adapters](agent/runtime/harness/README.md)).
 
 It runs headless in Kubernetes with the same guardrails regardless of the three choices.
 
@@ -31,7 +31,7 @@ This repo serves two distinct purposes. Pick the one you're here for:
 
 | You want to… | Go to | What it covers |
 |---|---|---|
-| **Install the agent** into an existing cluster (a customer's, or your own) | **[docs/customer-install/](docs/customer-install/)** | The shippable unit only: `agent/` (listener + skill + image + manifests) and `agent/terraform` (IRSA + optional CloudFront) against a cluster you already run. |
+| **Install the agent** into an existing cluster (a customer's, or your own) | **[docs/customer-install/](docs/customer-install/)** | The shippable unit only: `agent/` (listener + skill + image + manifests) and `agent/deploy/terraform` (IRSA + optional CloudFront) against a cluster you already run. |
 | **Stand up the full lab** (EKS + self-hosted GitLab + the agent) to develop or demo | **[docs/workshop/](docs/workshop/)** | The whole environment: `workshop/terraform` (VPC + EKS), GitLab via Helm, then the agent on top. Driven by the `Makefile`. |
 | **Understand how it works** | **[docs/architecture/](docs/architecture/)** | Topology and request-flow diagrams for both the workshop and the customer (agent-only) deployments, plus the trust/security model. |
 

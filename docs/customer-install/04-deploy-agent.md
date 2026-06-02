@@ -2,7 +2,7 @@
 
 Provision the cloud dependencies, build the image, fill in the manifests, apply,
 lock the webhook origin, and run the pre-launch checklist. This is the
-customer-cluster path (uses `agent/terraform` against your existing cluster). In
+customer-cluster path (uses `agent/deploy/terraform` against your existing cluster). In
 the workshop lab, the `Makefile` shortcuts some of this — see
 [workshop](../workshop/README.md#deploying-the-agent-in-the-lab).
 
@@ -12,12 +12,12 @@ the workshop lab, the `Makefile` shortcuts some of this — see
 
 ## Step 1 — Provision IRSA (and optionally CloudFront)
 
-`agent/terraform` creates the Bedrock IRSA role bound to **your existing
+`agent/deploy/terraform` creates the Bedrock IRSA role bound to **your existing
 cluster's** OIDC provider, and (optionally) a CloudFront distribution for the
 webhook.
 
 ```bash
-cd agent/terraform
+cd agent/deploy/terraform
 cp example.tfvars terraform.tfvars        # then edit it
 ```
 
@@ -45,33 +45,35 @@ terraform output -raw triage_bedrock_role_arn      # → into the SA annotation 
 ## Step 2 — Build and push the image
 
 The image is `linux/amd64` (match it to your node arch). Build context is
-`agent/`. Build args select which harness(es) to bake in — see
-[Choose your harness](03b-choose-harness.md).
+`agent/`. Each harness has its own Dockerfile under `agent/deploy/docker/`, all
+built FROM a shared `base.Dockerfile` (the runtime + agents). Pick the harness —
+see [Choose your harness](03b-choose-harness.md).
 
 ```bash
 REPO=<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
 aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin "${REPO%/*}"
 
-# Default: pi only.
-docker buildx build --platform linux/amd64 -f agent/docker/triage/Dockerfile -t "$REPO:latest" --push agent
-
-# Or include kiro-cli (add --build-arg INSTALL_PI=false to drop pi):
-# docker buildx build --platform linux/amd64 --build-arg INSTALL_KIRO=true \
-#   -f agent/docker/triage/Dockerfile -t "$REPO:latest" --push agent
+# Build the shared base once, then the selected harness FROM it (default: pi).
+docker buildx build --platform linux/amd64 \
+  -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
+docker buildx build --platform linux/amd64 \
+  -f agent/deploy/docker/pi.Dockerfile --build-arg BASE=triage-base:local \
+  -t "$REPO:latest" --push agent
+# (swap pi.Dockerfile → kiro.Dockerfile / opencode.Dockerfile for another harness)
 ```
 
-(The workshop equivalent is `make triage-image`.)
+(The workshop equivalent is `make triage-image HARNESS=pi`.)
 
 ## Step 3 — Fill in the manifests
 
 Copy the templated config/secret and set the placeholders.
 
 ```bash
-cp agent/k8s/triage-config.example.yaml  agent/k8s/triage-config.yaml    # fill (see Configure Jira §3)
-cp agent/k8s/triage-secrets.example.yaml agent/k8s/triage-secrets.yaml   # fill secrets
+cp agent/deploy/k8s/triage-config.example.yaml  agent/deploy/k8s/triage-config.yaml    # fill (see Configure Jira §3)
+cp agent/deploy/k8s/triage-secrets.example.yaml agent/deploy/k8s/triage-secrets.yaml   # fill secrets
 ```
 
-`agent/k8s/triage-secrets.yaml` — set the credentials. You need the auth secret
+`agent/deploy/k8s/triage-secrets.yaml` — set the credentials. You need the auth secret
 for **your** trigger path (and may leave the other as a placeholder):
 
 | Key | Value |
@@ -81,10 +83,10 @@ for **your** trigger path (and may leave the other as a placeholder):
 | `webhook-hmac-secret` | `openssl rand -hex 32` — **DC/Server** (system webhook) path |
 | `automation-shared-secret` | `openssl rand -hex 32` — **Cloud** (Automation rule) path |
 
-`agent/k8s/triage-namespace.yaml` — set the ServiceAccount annotation to the
+`agent/deploy/k8s/triage-namespace.yaml` — set the ServiceAccount annotation to the
 `triage_bedrock_role_arn` output from step 1.
 
-`agent/k8s/triage-listener.yaml` — set:
+`agent/deploy/k8s/triage-listener.yaml` — set:
 
 - `image:` → your `$REPO:latest`
 - `JIRA_BASE_URL` → your Jira base URL
@@ -98,11 +100,11 @@ for **your** trigger path (and may leave the other as a placeholder):
 ## Step 4 — Apply
 
 ```bash
-kubectl apply -f agent/k8s/triage-namespace.yaml
-kubectl apply -f agent/k8s/triage-config.yaml
-kubectl apply -f agent/k8s/triage-secrets.yaml
-kubectl apply -f agent/k8s/triage-netpol.yaml
-kubectl apply -f agent/k8s/triage-listener.yaml
+kubectl apply -f agent/deploy/k8s/triage-namespace.yaml
+kubectl apply -f agent/deploy/k8s/triage-config.yaml
+kubectl apply -f agent/deploy/k8s/triage-secrets.yaml
+kubectl apply -f agent/deploy/k8s/triage-netpol.yaml
+kubectl apply -f agent/deploy/k8s/triage-listener.yaml
 
 kubectl -n triage rollout status deploy/triage-listener
 ```
@@ -120,18 +122,18 @@ to create CloudFront in front of it:
 LB=$(kubectl get svc -n triage triage-listener \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
-cd agent/terraform
+cd agent/deploy/terraform
 terraform apply -var "listener_lb_dns=$LB"
 terraform output -raw triage_webhook_url          # → register in Jira (step 03)
 terraform output -json cloudfront_origin_cidrs    # → loadBalancerSourceRanges
 ```
 
 Paste the `cloudfront_origin_cidrs` into
-`agent/k8s/triage-listener.yaml`'s `loadBalancerSourceRanges`, then re-apply the
+`agent/deploy/k8s/triage-listener.yaml`'s `loadBalancerSourceRanges`, then re-apply the
 listener:
 
 ```bash
-kubectl apply -f agent/k8s/triage-listener.yaml
+kubectl apply -f agent/deploy/k8s/triage-listener.yaml
 ```
 
 Now only CloudFront can reach the public LB. Verify a **direct** POST to the LB
@@ -152,14 +154,14 @@ writes to real tickets:
 - [ ] **Real Jira API shapes.** With the bot token against a throwaway test
       issue, confirm the v3 request shapes the skill assumes (comment ADF body,
       `set-fields`, and whether issue-type is a field edit or a
-      transition-with-screen in your workflow). Fix `agent/skills/jira-triage/scripts/jira.sh`
+      transition-with-screen in your workflow). Fix `agent/agents/jira-triage/scripts/jira.sh`
       if your instance differs.
 - [ ] **(DC/Server) Captured HMAC signature.** Trigger one real webhook to a
       logging endpoint, capture the actual `X-Hub-Signature`, and confirm the
       algorithm/prefix matches `gate.js` (assumed `sha256=`).
 - [ ] **LB origin lock (R10b).** `loadBalancerSourceRanges` is populated with
       `cloudfront_origin_cidrs` and re-applied. A direct POST to the LB is refused.
-- [ ] **NetworkPolicy enforcement.** `agent/k8s/triage-netpol.yaml` is inert
+- [ ] **NetworkPolicy enforcement.** `agent/deploy/k8s/triage-netpol.yaml` is inert
       unless the VPC CNI network-policy controller is enabled
       (`ENABLE_NETWORK_POLICY=true` on the `aws-node` add-on). Confirm it's on, or
       the egress exfil boundary doesn't exist — see [Security](06-security.md).

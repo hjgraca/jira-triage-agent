@@ -134,7 +134,7 @@ cluster and the Bedrock role. Follow:
    ```bash
    make triage-image            # build + push the image to ECR
    # set the IRSA ARN, secrets, config, AUTHORIZED_ACTORS, JIRA_BASE_URL (see deploy guide)
-   make triage                  # apply agent/k8s manifests
+   make triage                  # apply agent/deploy/k8s manifests
    # then wire CloudFront:
    LB=$(kubectl get svc -n triage triage-listener \
      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
@@ -144,7 +144,7 @@ cluster and the Bedrock role. Follow:
    ```
 
 The Bedrock IRSA role and CloudFront here come from **`workshop/terraform`**
-(not `agent/terraform`), because the lab manages cluster and cloud deps in one
+(not `agent/deploy/terraform`), because the lab manages cluster and cloud deps in one
 state. Everything else (manifests, image, skill) is identical to the customer
 path.
 

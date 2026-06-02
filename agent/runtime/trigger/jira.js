@@ -5,7 +5,7 @@
 // eligibility. All the Jira-specific shape lives here; the listener core is
 // trigger-agnostic.
 
-const { verifySignature, verifySharedSecret } = require('../auth');
+const { verifySignature, verifySharedSecret } = require('../listener/auth');
 
 const TRIGGER_LABEL = process.env.TRIGGER_LABEL || 'triage';
 const AUTOMATION_TOKEN_HEADER = 'x-triage-token';

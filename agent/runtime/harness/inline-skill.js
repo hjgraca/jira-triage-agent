@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { splitFrontmatter } = require('../agent-def');
+const { splitFrontmatter } = require('../listener/agent-def');
 
 // Cache the rubric BODY per skillPath so we read it once, not per webhook. The
 // body is SKILL.md with its YAML frontmatter stripped — the frontmatter is the
