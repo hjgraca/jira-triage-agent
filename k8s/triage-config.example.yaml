@@ -1,0 +1,27 @@
+# Allowed-value sets the triage skill is permitted to write (R2). Copy to
+# k8s/triage-config.yaml, fill in the REAL values from the live KAN project
+# (Step 0.5 probe / U7), and apply. The skill scripts read this at
+# /etc/triage/config.json and FAIL CLOSED on any value not listed here.
+#
+#   priorities  — exact Jira priority names for the project's scheme
+#   assignees   — Jira accountIds of the on-call pool ONLY (R2c: no black-holes)
+#   issuetypes  — exact issue type names
+#   labels      — the curated label set the agent may apply
+#
+# Confirm each against the live project, e.g.:
+#   jira.sh get KAN-1 | jq '.fields.priority, .fields.issuetype, .fields.labels'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: triage-config
+  namespace: triage
+  labels:
+    app.kubernetes.io/managed-by: workshop-makefile
+data:
+  config.json: |
+    {
+      "labels": ["bug", "enhancement", "needs-info", "ready-for-agent", "ready-for-human", "wontfix", "needs-human"],
+      "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
+      "assignees": ["REPLACE_WITH_ONCALL_ACCOUNT_ID"],
+      "issuetypes": ["Bug", "Story", "Task"]
+    }

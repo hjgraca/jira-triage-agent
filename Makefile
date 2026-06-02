@@ -1,11 +1,12 @@
 ## Agentic-dev workshop platform — EKS + GitLab
 ##
 ## Usage:
-##   make cluster      # provision VPC + EKS via Terraform
-##   make kubeconfig   # point kubectl at the new cluster
-##   make apps         # deploy GitLab
-##   make up           # cluster + kubeconfig + apps (full bring-up)
-##   make destroy      # tear everything down (runs orphan cleanup first)
+##   make cluster        # provision VPC + EKS via Terraform
+##   make kubeconfig     # point kubectl at the new cluster
+##   make apps           # deploy GitLab
+##   make up             # cluster + kubeconfig + apps (full bring-up)
+##   make triage-image   # build + push the triage agent image to ECR
+##   make destroy        # tear everything down (runs orphan cleanup first)
 
 REGION         ?= us-west-2
 CLUSTER        ?= workshop
@@ -17,7 +18,13 @@ TF_DIR         := terraform
 # subcharts; they are removed in chart 10.x (GitLab 19.0).
 GITLAB_CHART_VERSION ?= 8.11.8
 
-.PHONY: cluster kubeconfig apps up gitlab destroy clean-k8s-lb
+# Triage agent image. Pushed to ECR in the cluster's account/region.
+TRIAGE_ECR_REPO ?= triage-agent
+TRIAGE_IMAGE_TAG ?= latest
+ACCOUNT_ID = $(shell aws sts get-caller-identity --query Account --output text)
+TRIAGE_IMAGE = $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(TRIAGE_ECR_REPO):$(TRIAGE_IMAGE_TAG)
+
+.PHONY: cluster kubeconfig apps up gitlab triage-image destroy clean-k8s-lb
 
 cluster:
 	cd $(TF_DIR) && terraform init && terraform apply \
@@ -41,6 +48,17 @@ gitlab:
 	# on the shared nginx LB; see helm/gitlab-values.yaml). Edit the source
 	# range in this manifest when your public IP changes.
 	kubectl apply -f k8s/gitlab-shell-ssh-lb.yaml
+
+## Build and push the triage agent image (listener + pi + jira-triage skill).
+## Creates the ECR repo if absent, logs in, builds, and pushes.
+triage-image:
+	aws ecr describe-repositories --region $(REGION) --repository-names $(TRIAGE_ECR_REPO) >/dev/null 2>&1 \
+		|| aws ecr create-repository --region $(REGION) --repository-name $(TRIAGE_ECR_REPO) >/dev/null
+	aws ecr get-login-password --region $(REGION) \
+		| docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
+	docker build -f docker/triage/Dockerfile -t $(TRIAGE_IMAGE) .
+	docker push $(TRIAGE_IMAGE)
+	@echo "Pushed $(TRIAGE_IMAGE)"
 
 up: cluster kubeconfig apps
 

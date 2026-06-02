@@ -79,6 +79,11 @@ spec:
               valueFrom: { secretKeyRef: { name: triage-secrets, key: gitlab-read-token } }
             - name: WEBHOOK_HMAC_SECRET
               valueFrom: { secretKeyRef: { name: triage-secrets, key: webhook-hmac-secret } }
+          volumeMounts:
+            # Allowed-value sets the skill reads (R2); fail-closed if absent.
+            - name: triage-config
+              mountPath: /etc/triage
+              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -98,6 +103,10 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
+      volumes:
+        - name: triage-config
+          configMap:
+            name: triage-config
 ---
 apiVersion: v1
 kind: Service
