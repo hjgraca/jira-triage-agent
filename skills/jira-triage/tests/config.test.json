@@ -1,0 +1,6 @@
+{
+  "labels": ["bug", "enhancement", "needs-info", "ready-for-agent", "ready-for-human", "wontfix", "needs-human"],
+  "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
+  "assignees": ["5b10ac8d82e05b22cc7d4ef5"],
+  "issuetypes": ["Bug", "Story", "Task"]
+}
