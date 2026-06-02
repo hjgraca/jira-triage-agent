@@ -1,0 +1,137 @@
+'use strict';
+
+// Pure decision logic for the webhook listener. No I/O here so every guard is
+// unit-testable without a live server or a real pi spawn. server.js wires these
+// to http + child_process.
+
+const crypto = require('crypto');
+
+// Jira Cloud system webhooks sign each delivery with HMAC and send it in the
+// X-Hub-Signature header as `<algo>=<hexdigest>` (historically sha256).
+// VERIFY (Step 0.5): confirm the algorithm/prefix against a real captured
+// header before trusting the 401 path in production.
+const SIGNATURE_ALGO = 'sha256';
+
+/**
+ * Constant-time HMAC validation over the EXACT raw body bytes (R10/R10a).
+ * Returns true only if the recomputed digest matches the header signature.
+ * Uses crypto.timingSafeEqual — never a string === compare.
+ */
+function verifySignature(rawBody, headerValue, secret) {
+  if (!headerValue || !secret) return false;
+  const eq = headerValue.indexOf('=');
+  const algo = eq === -1 ? SIGNATURE_ALGO : headerValue.slice(0, eq);
+  const sentHex = eq === -1 ? headerValue : headerValue.slice(eq + 1);
+  if (algo !== SIGNATURE_ALGO) return false;
+
+  const expected = crypto.createHmac(SIGNATURE_ALGO, secret).update(rawBody).digest();
+  let sent;
+  try {
+    sent = Buffer.from(sentHex, 'hex');
+  } catch {
+    return false;
+  }
+  // timingSafeEqual throws on length mismatch; guard so we still compare in
+  // constant time relative to equal-length forgeries.
+  if (sent.length !== expected.length) return false;
+  return crypto.timingSafeEqual(sent, expected);
+}
+
+const TRIGGER_LABEL = 'triage';
+
+/**
+ * Was the `triage` label added in this update's changelog?
+ * Jira changelog items for labels carry space-joined label strings in
+ * fromString/toString; "added" means it's in toString but not fromString.
+ */
+function triageLabelAdded(payload) {
+  const items = payload?.changelog?.items;
+  if (!Array.isArray(items)) return false;
+  return items.some((it) => {
+    if (it.field !== 'labels' && it.fieldId !== 'labels') return false;
+    const before = (it.fromString || '').split(/\s+/).filter(Boolean);
+    const after = (it.toString || '').split(/\s+/).filter(Boolean);
+    return after.includes(TRIGGER_LABEL) && !before.includes(TRIGGER_LABEL);
+  });
+}
+
+/**
+ * Decide what to do with an authenticated webhook. Pure: takes the parsed
+ * payload + listener state, returns one of:
+ *   { action: 'drop', reason } | { action: 'spawn', key }
+ *
+ * Order mirrors the plan's eligibility-gate diagram (after HMAC + dedupe,
+ * which server.js handles before calling this):
+ *   loop-guard (R7) → eligibility (R6) → authorization (R6b)
+ *
+ * state = {
+ *   botAccountId: string|null,          // from GET /myself at startup
+ *   authorizedActors: Set<string>,      // allowlisted accountIds (R6b)
+ *   triageMarker: string,               // disclaimer sentinel (stateless self-write guard)
+ * }
+ */
+function decide(payload, state) {
+  const event = payload?.webhookEvent;
+  const actorId = payload?.user?.accountId || null;
+
+  // Loop guard (R7), with a stateless fallback (cold-start window): drop the
+  // agent's own writes either by bot accountId OR by the disclaimer marker
+  // appearing in the triggering comment, so the guard holds even before
+  // /myself has resolved on a fresh pod.
+  if (state.botAccountId && actorId && actorId === state.botAccountId) {
+    return { action: 'drop', reason: 'loop-guard: bot accountId' };
+  }
+  if (state.triageMarker && payloadCarriesMarker(payload, state.triageMarker)) {
+    return { action: 'drop', reason: 'loop-guard: self-write marker' };
+  }
+
+  const key = payload?.issue?.key;
+  if (!key) return { action: 'drop', reason: 'no issue key' };
+
+  // Eligibility (R6): issue created, OR triage label added on update.
+  let eligible = false;
+  let isLabelAdd = false;
+  if (event === 'jira:issue_created') {
+    eligible = true;
+  } else if (event === 'jira:issue_updated' && triageLabelAdded(payload)) {
+    eligible = true;
+    isLabelAdd = true;
+  }
+  if (!eligible) return { action: 'drop', reason: 'ineligible event' };
+
+  // Authorization (R6b): a label-add must come from an allowlisted actor.
+  // (issue_created is gated by who can create issues in the project; the label
+  // path is the abuse vector we must guard.)
+  if (isLabelAdd) {
+    if (!actorId || !state.authorizedActors.has(actorId)) {
+      return { action: 'drop', reason: 'unauthorized label actor' };
+    }
+  }
+
+  return { action: 'spawn', key };
+}
+
+// The agent's own comments start with the disclaimer sentinel; a comment-add
+// webhook carrying it is a self-write echo.
+function payloadCarriesMarker(payload, marker) {
+  const c = payload?.comment?.body;
+  if (typeof c === 'string') return c.includes(marker);
+  // ADF body: stringify and search (cheap, marker is short).
+  if (c && typeof c === 'object') {
+    try {
+      return JSON.stringify(c).includes(marker);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+module.exports = {
+  verifySignature,
+  triageLabelAdded,
+  decide,
+  payloadCarriesMarker,
+  TRIGGER_LABEL,
+  SIGNATURE_ALGO,
+};

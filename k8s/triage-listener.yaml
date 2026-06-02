@@ -1,0 +1,120 @@
+# Webhook listener: Deployment + a dedicated internet-facing LoadBalancer.
+#
+# Why a dedicated LB (KTD10), not the shared GitLab nginx ELB:
+#   - Locking inbound to CloudFront-only (R10b) can't be done on the shared
+#     Classic ELB without breaking GitLab's public web (the same Service-wide
+#     source-range constraint that forced k8s/gitlab-shell-ssh-lb.yaml).
+#   - Routing through the shared nginx ingress hits a CloudFront Host-header
+#     trap (nginx routes by Host; CloudFront doesn't forward the viewer Host to
+#     a custom origin). A dedicated LB with no host-based routing avoids both.
+#
+# CloudFront is this LB's origin. The LB security group is locked to the
+# CloudFront origin-facing prefix list in terraform/cloudfront.tf (R10b), so the
+# public LB cannot be POSTed directly.
+#
+# IMPORTANT: set loadBalancerSourceRanges OR the SG lock (terraform/cloudfront.tf)
+# before exposing — see README "Triage agent".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triage-listener
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: triage-listener
+    app.kubernetes.io/managed-by: workshop-makefile
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: triage-listener
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: triage-listener
+    spec:
+      serviceAccountName: triage-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: listener
+          # Replace with the pushed image (see Makefile triage-image target).
+          image: <TRIAGE_IMAGE>
+          # tini/--init is provided by the image entrypoint (KTD9) to reap
+          # finished pi subprocesses.
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: WEBHOOK_PATH
+              value: "/jira-webhook"
+            - name: SKILL_PATH
+              value: "/skills/jira-triage"
+            - name: PI_MODEL
+              value: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+            - name: AWS_REGION
+              value: "us-west-2"
+            - name: MAX_CONCURRENT
+              value: "3"
+            - name: SPAWN_CEILING
+              value: "60"
+            # Comma-separated Jira accountIds allowed to trigger via the label (R6b).
+            - name: AUTHORIZED_ACTORS
+              value: "<COMMA_SEPARATED_ACCOUNT_IDS>"
+            - name: JIRA_BASE_URL
+              value: "https://<your-site>.atlassian.net"
+            - name: GITLAB_BASE_URL
+              value: "http://gitlab-webservice-default.gitlab.svc"
+            - name: TRIAGE_CONFIG
+              value: "/etc/triage/config.json"
+            # Secrets (R13) — from k8s/triage-secrets.yaml
+            - name: JIRA_EMAIL
+              valueFrom: { secretKeyRef: { name: triage-secrets, key: jira-email } }
+            - name: JIRA_API_TOKEN
+              valueFrom: { secretKeyRef: { name: triage-secrets, key: jira-api-token } }
+            - name: GITLAB_READ_TOKEN
+              valueFrom: { secretKeyRef: { name: triage-secrets, key: gitlab-read-token } }
+            - name: WEBHOOK_HMAC_SECRET
+              valueFrom: { secretKeyRef: { name: triage-secrets, key: webhook-hmac-secret } }
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # Bounds concurrent pi runs' memory footprint; pair with
+              # MAX_CONCURRENT so a burst can't OOM the node.
+              memory: 2Gi
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            # Fail closed (R7): not Ready until GET /myself resolves the bot
+            # accountId, so webhooks are never served without a loop guard.
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triage-listener
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: triage-listener
+    app.kubernetes.io/managed-by: workshop-makefile
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "classic"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: triage-listener
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
