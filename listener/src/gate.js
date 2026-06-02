@@ -37,7 +37,35 @@ function verifySignature(rawBody, headerValue, secret) {
   return crypto.timingSafeEqual(sent, expected);
 }
 
+/**
+ * Constant-time shared-secret check for the Jira Automation path (R10a-bis).
+ *
+ * Jira Cloud Automation's "Send web request" cannot compute an HMAC over the
+ * body (no smart-value crypto), so it can't produce the X-Hub-Signature the
+ * HMAC path needs. Instead the rule sends a fixed bearer token in a custom
+ * header and we compare it here in constant time. This is a weaker primitive
+ * than per-message HMAC (a static token is replayable if leaked), so it is only
+ * one layer: the CloudFront-origin IP lock (R10b) already blocks direct POSTs
+ * to the LB, and the authz allowlist (R6b) + dedupe (R8) + daily budget (R10c)
+ * bound what a replay could do. Keep HMAC as the preferred path for any source
+ * that can sign.
+ */
+function verifySharedSecret(headerValue, secret) {
+  if (!headerValue || !secret) return false;
+  const sent = Buffer.from(String(headerValue));
+  const expected = Buffer.from(String(secret));
+  if (sent.length !== expected.length) return false;
+  return crypto.timingSafeEqual(sent, expected);
+}
+
 const TRIGGER_LABEL = 'triage';
+
+// webhookEvent value the Jira Automation rule sets in its custom JSON body to
+// distinguish itself from a Jira-native system-webhook event. The rule fires
+// only when the triage label is added, so this event is eligible by
+// construction (no changelog to re-verify) but still subject to the R6b actor
+// allowlist via the initiator accountId the rule includes in the body.
+const AUTOMATION_LABEL_EVENT = 'automation:label-added';
 
 // The disclaimer sentinel the triage agent prepends to every comment. This MUST
 // remain a substring of what skills/jira-triage/scripts/jira.sh writes
@@ -97,11 +125,23 @@ function decide(payload, state) {
   if (!key) return { action: 'drop', reason: 'no issue key' };
 
   // Eligibility (R6): issue created, OR triage label added on update.
+  //
+  // Three sources, two shapes:
+  //   - System webhook `jira:issue_created`              → eligible, no label authz
+  //   - System webhook `jira:issue_updated` + changelog  → eligible iff triage added
+  //   - Automation rule `automation:label-added`         → eligible by construction:
+  //       the rule's own trigger condition (label value = triage) is the gate, so
+  //       there is no Jira changelog in the body to re-verify. Treated as a
+  //       label-add for authz purposes (R6b) — the rule passes the initiator's
+  //       accountId in the body so the allowlist still applies.
   let eligible = false;
   let isLabelAdd = false;
   if (event === 'jira:issue_created') {
     eligible = true;
   } else if (event === 'jira:issue_updated' && triageLabelAdded(payload)) {
+    eligible = true;
+    isLabelAdd = true;
+  } else if (event === AUTOMATION_LABEL_EVENT) {
     eligible = true;
     isLabelAdd = true;
   }
@@ -137,10 +177,12 @@ function payloadCarriesMarker(payload, marker) {
 
 module.exports = {
   verifySignature,
+  verifySharedSecret,
   triageLabelAdded,
   decide,
   payloadCarriesMarker,
   TRIGGER_LABEL,
   TRIAGE_MARKER,
   SIGNATURE_ALGO,
+  AUTOMATION_LABEL_EVENT,
 };

@@ -131,12 +131,28 @@ and severity, then — for low/medium tickets — sets priority/labels/assignee/
 type and posts an audit comment. High-severity tickets get a `needs-human` label
 and a recommendation only (it never auto-writes the riskiest tickets).
 
-**How it triggers.** A Jira **system webhook** fires on issue creation or when
-the `triage` label is added. The webhook hits a CloudFront URL (valid TLS, no
-domain needed) whose origin is a dedicated in-cluster LoadBalancer. A listener
-validates the webhook (HMAC), drops its own writes (loop guard) and unauthorized
+**How it triggers.** An outbound request fires when the `triage` label is added
+(or, for system webhooks, on issue creation). It hits a CloudFront URL (valid
+TLS, no domain needed) whose origin is a dedicated in-cluster LoadBalancer. A
+listener authenticates it, drops its own writes (loop guard) and unauthorized
 label-adds, then spawns a one-shot `pi` run. The agent removes the `triage`
 label when done, so the label doubles as a work-queue flag.
+
+There are two supported trigger sources, and the listener accepts **either**:
+
+- **Jira Automation rule (recommended on Cloud).** A no-code rule sends a web
+  request on the label-add. Jira Cloud's "Send web request" **cannot compute an
+  HMAC** over the body, so the rule instead presents a fixed shared-secret bearer
+  in the `X-Triage-Token` header (`AUTOMATION_SHARED_SECRET`). This is a weaker
+  primitive than per-message HMAC (a static token is replayable if leaked), so it
+  leans on the other layers: the CloudFront-origin IP lock (R10b) blocks direct
+  POSTs to the LB, and the actor allowlist (R6b) + dedupe (R8) + daily budget
+  (R10c) bound what a replay could do. In practice this is the only path that
+  reliably delivers on Jira Cloud — see the caveat under "Register the trigger".
+- **Jira system webhook (HMAC).** Signs each delivery with `X-Hub-Signature`;
+  the listener validates it in constant time. Preferred wherever it actually
+  delivers (some Jira Cloud sites silently drop system-webhook delivery to
+  arbitrary external URLs; Data Center / Server deliver reliably).
 
 > **The agent writes to real tickets.** Guards: HMAC-authenticated webhook,
 > allowlisted trigger actors, allowed-value-only field writes, severity-gated
@@ -195,7 +211,50 @@ terraform -chdir=terraform output -json cloudfront_origin_cidrs  # → loadBalan
 #    k8s/triage-listener.yaml's loadBalancerSourceRanges, then: make triage
 ```
 
-### Register the Jira webhook
+### Register the trigger
+
+> **Jira Cloud caveat.** System webhooks (`/rest/webhooks/1.0/`) frequently do
+> **not** deliver to arbitrary external URLs on Cloud, even with a valid HMAC and
+> a matching JQL filter — Atlassian steers external integrations to Connect/Forge
+> or Automation. If you're on Cloud, use the **Automation rule** below. The
+> system-webhook recipe is for Data Center / Server (where it delivers reliably).
+
+#### Option A — Jira Automation rule (recommended on Cloud)
+
+No-code, and the only path proven to deliver on Cloud. Set
+`AUTOMATION_SHARED_SECRET` in `k8s/triage-secrets.yaml` first (`openssl rand -hex
+32`), `kubectl apply` the secret, and roll the deployment.
+
+In **Project settings → Automation → Create rule** (or global Automation):
+
+1. **Trigger:** *Field value changed* → field **Labels**. (Or *Issue created*
+   for the create path.)
+2. **Condition (recommended):** *Issue fields condition* → **Labels** *contains*
+   `triage`. This keeps the rule from firing on unrelated label edits.
+3. **Action:** *Send web request*.
+   - **URL:** the `triage_webhook_url` output
+     (`https://<dist>.cloudfront.net/jira-webhook`)
+   - **HTTP method:** `POST`
+   - **Headers:**
+     - `Content-Type: application/json`
+     - `X-Triage-Token: <AUTOMATION_SHARED_SECRET>`
+     - `X-Triage-Delivery-Id: {{rule.id}}-{{issue.key}}-{{issue.fields.updated}}`
+       (a stable id so a retried delivery is deduped, not double-triaged)
+   - **Web request body:** *Custom data*:
+     ```json
+     {
+       "webhookEvent": "automation:label-added",
+       "user": { "accountId": "{{initiator.accountId}}" },
+       "issue": { "key": "{{issue.key}}" }
+     }
+     ```
+   - Leave "Wait for response" unchecked (the listener acks fast and works async).
+
+The `webhookEvent: automation:label-added` value tells the listener this came
+from a rule (eligible by construction — the rule's own label condition is the
+gate), while `initiator.accountId` keeps the R6b actor allowlist in force.
+
+#### Option B — Jira system webhook (HMAC; Data Center / Server)
 
 Create a **system** webhook (not a dynamic/Connect webhook — only system
 webhooks carry the `X-Hub-Signature` HMAC the listener validates) in Jira admin
@@ -204,6 +263,7 @@ webhooks carry the `X-Hub-Signature` HMAC the listener validates) in Jira admin
 - **URL**: the `triage_webhook_url` output (`https://<dist>.cloudfront.net/jira-webhook`)
 - **Secret**: the HMAC secret from setup step 3
 - **Events**: `Issue: created`, `Issue: updated`
+- **JQL filter** (recommended): scope to the project, e.g. `project = KAN`
 
 ### Pre-launch verification (blocking)
 

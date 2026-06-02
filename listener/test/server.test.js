@@ -7,10 +7,12 @@ const http = require('http');
 
 // Configure env BEFORE requiring the server module.
 process.env.WEBHOOK_HMAC_SECRET = 'b'.repeat(64);
+process.env.AUTOMATION_SHARED_SECRET = 'c'.repeat(48);
 process.env.AUTHORIZED_ACTORS = 'ALLOWED-1';
 process.env.PI_BIN = '/usr/bin/true'; // spawning this exits 0 immediately, no real pi
 
 const SECRET = process.env.WEBHOOK_HMAC_SECRET;
+const AUTOMATION_SECRET = process.env.AUTOMATION_SHARED_SECRET;
 const { createServer, state, limiter } = require('../src/server');
 
 let server;
@@ -104,6 +106,56 @@ test('unauthorized label-add → 200 drop, no spawn', async () => {
     'x-atlassian-webhook-identifier': 'wid-unauth',
   });
   assert.strictEqual(r.status, 200);
+});
+
+// --- Jira Automation path (shared-secret, R10a-bis) --------------------------
+test('Automation request with valid shared-secret token + eligible event → 200', async () => {
+  const body = JSON.stringify({
+    webhookEvent: 'automation:label-added',
+    user: { accountId: 'ALLOWED-1' },
+    issue: { key: 'KAN-AUTO-1' },
+  });
+  const r = await post('/jira-webhook', body, {
+    'x-triage-token': AUTOMATION_SECRET,
+    'x-triage-delivery-id': 'auto-del-1',
+  });
+  assert.strictEqual(r.status, 200);
+});
+
+test('Automation request with wrong shared-secret token → 401', async () => {
+  const body = JSON.stringify({
+    webhookEvent: 'automation:label-added',
+    user: { accountId: 'ALLOWED-1' },
+    issue: { key: 'KAN-AUTO-2' },
+  });
+  const r = await post('/jira-webhook', body, {
+    'x-triage-token': 'wrong-token',
+    'x-triage-delivery-id': 'auto-del-2',
+  });
+  assert.strictEqual(r.status, 401);
+});
+
+test('Automation request with no auth at all → 401', async () => {
+  const body = JSON.stringify({
+    webhookEvent: 'automation:label-added',
+    user: { accountId: 'ALLOWED-1' },
+    issue: { key: 'KAN-AUTO-3' },
+  });
+  const r = await post('/jira-webhook', body, { 'x-triage-delivery-id': 'auto-del-3' });
+  assert.strictEqual(r.status, 401);
+});
+
+test('Automation delivery-id is deduped on its own header', async () => {
+  const body = JSON.stringify({
+    webhookEvent: 'automation:label-added',
+    user: { accountId: 'ALLOWED-1' },
+    issue: { key: 'KAN-AUTO-4' },
+  });
+  const h = { 'x-triage-token': AUTOMATION_SECRET, 'x-triage-delivery-id': 'auto-del-dup' };
+  const r1 = await post('/jira-webhook', body, h);
+  const r2 = await post('/jira-webhook', body, h);
+  assert.strictEqual(r1.status, 200);
+  assert.strictEqual(r2.status, 200); // deduped, still 200
 });
 
 test('spawn lifecycle releases the limiter slot (active drains to 0)', async () => {

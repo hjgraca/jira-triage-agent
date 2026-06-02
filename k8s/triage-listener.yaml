@@ -89,6 +89,10 @@ spec:
               valueFrom: { secretKeyRef: { name: triage-secrets, key: gitlab-read-token } }
             - name: WEBHOOK_HMAC_SECRET
               valueFrom: { secretKeyRef: { name: triage-secrets, key: webhook-hmac-secret } }
+            # Shared-secret bearer for the Jira Automation path (R10a-bis). Empty
+            # disables that path; set it to enable Automation-rule triggering.
+            - name: AUTOMATION_SHARED_SECRET
+              valueFrom: { secretKeyRef: { name: triage-secrets, key: automation-shared-secret } }
           volumeMounts:
             # Allowed-value sets the skill reads (R2); fail-closed if absent.
             - name: triage-config

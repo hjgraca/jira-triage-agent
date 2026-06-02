@@ -3,7 +3,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { verifySignature, triageLabelAdded, decide } = require('../src/gate');
+const {
+  verifySignature,
+  verifySharedSecret,
+  triageLabelAdded,
+  decide,
+  AUTOMATION_LABEL_EVENT,
+} = require('../src/gate');
 const { DedupeCache, SpawnLimiter } = require('../src/limits');
 
 const SECRET = 'a'.repeat(64);
@@ -38,6 +44,24 @@ test('wrong algorithm prefix is rejected', () => {
 test('length-mismatched signature is rejected without throwing', () => {
   const body = Buffer.from('{}');
   assert.strictEqual(verifySignature(body, 'sha256=abcd', SECRET), false);
+});
+
+// --- shared-secret auth (R10a-bis, Automation path) --------------------------
+test('correct shared secret is accepted', () => {
+  assert.strictEqual(verifySharedSecret('s3cret-token', 's3cret-token'), true);
+});
+
+test('wrong shared secret is rejected', () => {
+  assert.strictEqual(verifySharedSecret('nope', 's3cret-token'), false);
+});
+
+test('missing shared secret header or unset secret is rejected', () => {
+  assert.strictEqual(verifySharedSecret(undefined, 's3cret-token'), false);
+  assert.strictEqual(verifySharedSecret('s3cret-token', ''), false);
+});
+
+test('length-mismatched shared secret is rejected without throwing (constant-time guard)', () => {
+  assert.strictEqual(verifySharedSecret('short', 'a-much-longer-secret'), false);
 });
 
 // --- loop guard (R7) ---------------------------------------------------------
@@ -113,6 +137,36 @@ test('triage label added by ALLOWED actor spawns', () => {
     changelog: { items: [{ field: 'labels', fromString: '', toString: 'triage' }] },
   };
   assert.deepStrictEqual(decide(payload, baseState()), { action: 'spawn', key: 'KAN-5' });
+});
+
+// --- Automation rule event (R10a-bis) ----------------------------------------
+test('automation label-added event from ALLOWED actor spawns (no changelog needed)', () => {
+  const payload = {
+    webhookEvent: AUTOMATION_LABEL_EVENT,
+    user: { accountId: 'ALLOWED-1' },
+    issue: { key: 'KAN-7' },
+  };
+  assert.deepStrictEqual(decide(payload, baseState()), { action: 'spawn', key: 'KAN-7' });
+});
+
+test('automation label-added event from UNAUTHORIZED actor is dropped (R6b still applies)', () => {
+  const payload = {
+    webhookEvent: AUTOMATION_LABEL_EVENT,
+    user: { accountId: 'OUTSIDER' },
+    issue: { key: 'KAN-7' },
+  };
+  const v = decide(payload, baseState());
+  assert.strictEqual(v.action, 'drop');
+  assert.match(v.reason, /unauthorized/);
+});
+
+test('automation label-added event still honors the loop guard (bot self-write)', () => {
+  const payload = {
+    webhookEvent: AUTOMATION_LABEL_EVENT,
+    user: { accountId: 'BOT-1' },
+    issue: { key: 'KAN-7' },
+  };
+  assert.strictEqual(decide(payload, baseState()).action, 'drop');
 });
 
 // --- dedupe (R8) -------------------------------------------------------------

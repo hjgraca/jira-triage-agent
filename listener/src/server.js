@@ -7,12 +7,16 @@
 
 const http = require('http');
 const { spawn } = require('child_process');
-const { verifySignature, decide, TRIAGE_MARKER } = require('./gate');
+const { verifySignature, verifySharedSecret, decide, TRIAGE_MARKER } = require('./gate');
 const { DedupeCache, SpawnLimiter } = require('./limits');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || '/jira-webhook';
 const HMAC_SECRET = process.env.WEBHOOK_HMAC_SECRET || '';
+// Shared-secret bearer for the Jira Automation path (the rule can't compute an
+// HMAC). Empty → that path is disabled and only HMAC is accepted.
+const AUTOMATION_SECRET = process.env.AUTOMATION_SHARED_SECRET || '';
+const AUTOMATION_TOKEN_HEADER = 'x-triage-token';
 const PI_BIN = process.env.PI_BIN || 'pi';
 const PI_MODEL = process.env.PI_MODEL || 'us.anthropic.claude-sonnet-4-6';
 const SKILL_PATH = process.env.SKILL_PATH || '/skills/jira-triage';
@@ -124,12 +128,20 @@ function spawnTriage(key, dedupeId) {
 }
 
 async function handleWebhook(req, res, rawBody) {
-  // 1. HMAC (R10/R10a)
-  if (!verifySignature(rawBody, req.headers['x-hub-signature'], HMAC_SECRET)) {
-    log({ msg: 'reject', reason: 'bad-signature' });
+  // 1. Authenticate: EITHER a valid HMAC over the raw body (system webhook,
+  //    R10/R10a) OR a valid shared-secret bearer (Jira Automation path, which
+  //    cannot sign — R10a-bis). Both are constant-time; the IP origin lock
+  //    (R10b) is the outer fence in front of both.
+  const hmacOk = verifySignature(rawBody, req.headers['x-hub-signature'], HMAC_SECRET);
+  const tokenOk =
+    !!AUTOMATION_SECRET &&
+    verifySharedSecret(req.headers[AUTOMATION_TOKEN_HEADER], AUTOMATION_SECRET);
+  if (!hmacOk && !tokenOk) {
+    log({ msg: 'reject', reason: 'unauthenticated' });
     res.writeHead(401).end('unauthorized');
     return;
   }
+  const authVia = hmacOk ? 'hmac' : 'shared-secret';
 
   // 2. Parse (after auth, so we never parse untrusted unsigned bodies)
   let payload;
@@ -141,8 +153,11 @@ async function handleWebhook(req, res, rawBody) {
     return;
   }
 
-  // 3. Dedupe (R8)
-  const id = req.headers['x-atlassian-webhook-identifier'];
+  // 3. Dedupe (R8). System webhooks carry Jira's native identifier; the
+  //    Automation rule has no such header, so it sends its own stable id in
+  //    X-Triage-Delivery-Id (e.g. {{automationRule.id}}-{{issue.key}}-{{...}}).
+  const id =
+    req.headers['x-atlassian-webhook-identifier'] || req.headers['x-triage-delivery-id'];
   if (dedupe.seenBefore(id)) {
     log({ msg: 'drop', reason: 'duplicate', id });
     res.writeHead(200).end('ok');
@@ -168,7 +183,7 @@ async function handleWebhook(req, res, rawBody) {
   // 6. Ack fast, then spawn off the request path (KTD3). Pass the dedupe id so
   // a spawn failure can evict it and let Jira's redelivery retry (otherwise the
   // id is cached for 24h and the eligible ticket is silently never triaged).
-  log({ msg: 'spawn', key: verdict.key });
+  log({ msg: 'spawn', key: verdict.key, authVia });
   res.writeHead(200).end('ok');
   spawnTriage(verdict.key, id);
 }
