@@ -45,26 +45,44 @@ class DedupeCache {
  * then drops the webhook with a logged 200 rather than spawning.
  */
 class SpawnLimiter {
-  constructor({ maxConcurrent = 3, ceiling = 60, windowMs = 60 * 1000, now = Date.now } = {}) {
+  constructor({
+    maxConcurrent = 3,
+    ceiling = 60,
+    windowMs = 60 * 1000,
+    dailyBudget = 500,
+    now = Date.now,
+  } = {}) {
     this.maxConcurrent = maxConcurrent;
     this.ceiling = ceiling;
     this.windowMs = windowMs;
+    // Cumulative daily spawn budget — a hard ceiling on billable Bedrock runs
+    // per 24h that the rolling-window rate limit alone can't bound (a steady
+    // drip under the per-minute ceiling could still rack up cost all day, and
+    // issue_created has no per-actor authz). Resets on a rolling 24h window.
+    this.dailyBudget = dailyBudget;
     this.now = now;
     this.active = 0;
-    this.starts = []; // epoch ms of recent spawns
+    this.starts = []; // epoch ms of recent spawns (rolling window)
+    this.day = []; // epoch ms of spawns in the last 24h
   }
 
   _trim() {
-    const cutoff = this.now() - this.windowMs;
+    const t = this.now();
+    const cutoff = t - this.windowMs;
     while (this.starts.length && this.starts[0] <= cutoff) this.starts.shift();
+    const dayCutoff = t - 24 * 60 * 60 * 1000;
+    while (this.day.length && this.day[0] <= dayCutoff) this.day.shift();
   }
 
   tryAcquire() {
     this._trim();
     if (this.active >= this.maxConcurrent) return { ok: false, reason: 'concurrency' };
     if (this.starts.length >= this.ceiling) return { ok: false, reason: 'rate-ceiling' };
+    if (this.day.length >= this.dailyBudget) return { ok: false, reason: 'daily-budget' };
+    const t = this.now();
     this.active += 1;
-    this.starts.push(this.now());
+    this.starts.push(t);
+    this.day.push(t);
     return { ok: true };
   }
 

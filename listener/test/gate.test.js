@@ -147,7 +147,7 @@ test('semaphore blocks beyond max concurrency', () => {
 
 test('global rate ceiling blocks a storm regardless of concurrency', () => {
   let now = 0;
-  const l = new SpawnLimiter({ maxConcurrent: 100, ceiling: 3, windowMs: 1000, now: () => now });
+  const l = new SpawnLimiter({ maxConcurrent: 100, ceiling: 3, windowMs: 1000, dailyBudget: 1000, now: () => now });
   assert.strictEqual(l.tryAcquire().ok, true);
   l.release();
   assert.strictEqual(l.tryAcquire().ok, true);
@@ -158,5 +158,22 @@ test('global rate ceiling blocks a storm regardless of concurrency', () => {
   assert.strictEqual(fourth.ok, false);
   assert.strictEqual(fourth.reason, 'rate-ceiling');
   now += 1001; // window rolls
+  assert.strictEqual(l.tryAcquire().ok, true);
+});
+
+test('daily budget caps total spawns even under the per-minute ceiling', () => {
+  let now = 0;
+  // High concurrency + high per-window ceiling, but only 2 runs/day allowed.
+  const l = new SpawnLimiter({ maxConcurrent: 100, ceiling: 100, windowMs: 1000, dailyBudget: 2, now: () => now });
+  assert.strictEqual(l.tryAcquire().ok, true);
+  l.release();
+  now += 2000; // roll the per-minute window so rate-ceiling can't be the blocker
+  assert.strictEqual(l.tryAcquire().ok, true);
+  l.release();
+  now += 2000;
+  const third = l.tryAcquire();
+  assert.strictEqual(third.ok, false);
+  assert.strictEqual(third.reason, 'daily-budget');
+  now += 24 * 60 * 60 * 1000 + 1; // a day later — budget resets
   assert.strictEqual(l.tryAcquire().ok, true);
 });

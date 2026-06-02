@@ -23,7 +23,15 @@ metadata:
     app.kubernetes.io/name: triage-listener
     app.kubernetes.io/managed-by: workshop-makefile
 spec:
+  # MUST stay at 1. The dedupe cache (R8) and spawn limiter / daily budget
+  # (R10c) are in-memory and per-pod; with replicas>1 each pod would dedupe and
+  # rate-limit independently, so duplicates and over-budget spend would slip
+  # through. Scaling out requires moving that state to a shared store first.
   replicas: 1
+  strategy:
+    # Recreate (not RollingUpdate) so two pods never run concurrently during a
+    # rollout — same single-writer invariant as above.
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: triage-listener
@@ -61,6 +69,8 @@ spec:
               value: "3"
             - name: SPAWN_CEILING
               value: "60"
+            - name: DAILY_BUDGET
+              value: "500"
             # Comma-separated Jira accountIds allowed to trigger via the label (R6b).
             - name: AUTHORIZED_ACTORS
               value: "<COMMA_SEPARATED_ACCOUNT_IDS>"

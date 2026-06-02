@@ -205,6 +205,36 @@ webhooks carry the `X-Hub-Signature` HMAC the listener validates) in Jira admin
 - **Secret**: the HMAC secret from setup step 3
 - **Events**: `Issue: created`, `Issue: updated`
 
+### Pre-launch verification (blocking)
+
+These cannot be verified from code alone — they need the live Jira/cluster.
+**Do all of them before registering the webhook on a real project**, because
+the agent writes to real tickets and an open or mis-shaped path is hard to
+walk back:
+
+- [ ] **Real Jira API shapes (Step 0.5 probe).** With the bot token against a
+      throwaway `KAN` test issue, confirm the v3 request shapes the skill
+      assumes (`set-fields`/comment ADF body, and whether issue-type is a field
+      edit or a transition-with-screen). The scripts mark these `VERIFY`. Fix
+      `jira.sh` if the live API differs before pointing it at real tickets.
+- [ ] **Captured HMAC signature.** Trigger one real webhook to a logging
+      endpoint and capture the actual `X-Hub-Signature` + body. Confirm the
+      algorithm/prefix matches `gate.js` (assumed `sha256=`) so the 401 path is
+      validated against Jira's real signature, not a self-generated one.
+- [ ] **LB origin lock (R10b).** Confirm `loadBalancerSourceRanges` in
+      `k8s/triage-listener.yaml` is populated with the `cloudfront_origin_cidrs`
+      output and re-applied — until then the public LB accepts anyone, with HMAC
+      as the only gate. Verify a direct POST to the LB hostname (bypassing
+      CloudFront) is refused.
+- [ ] **NetworkPolicy enforcement.** The ingress/egress policy
+      (`k8s/triage-netpol.yaml`) is inert unless the VPC CNI network-policy
+      controller is enabled (`ENABLE_NETWORK_POLICY=true` on the `aws-node`
+      add-on). Confirm it's on, or the egress exfil boundary doesn't exist.
+- [ ] **Daily spend budget.** `DAILY_BUDGET` (default 500 runs/24h) caps
+      Bedrock cost — `issue_created` has no per-actor authz, so this is the
+      backstop if issue creation is open to untrusted reporters. Set it to your
+      tolerance, and confirm issue-creation permissions match your assumption.
+
 ### Operations
 
 - **Verify**: create a low/medium ticket in `KAN` (or add the `triage` label).

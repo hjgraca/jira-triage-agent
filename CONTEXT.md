@@ -52,3 +52,17 @@ writes from re-triggering a run.
 
 The pi.dev coding harness the agent is built on; runs headless (`--mode json`),
 authenticates to Bedrock via IRSA, loads the triage rubric as a skill.
+
+### GitLab routing
+
+The optional step where the agent maps a ticket to an owning component/owner by
+reading GitLab. The customer's GitLab is **in the same cluster**, reached over
+in-cluster Service DNS — no VPC egress. Read-only deploy token (`read_repository`).
+
+### Bedrock egress
+
+The single path that leaves the cluster VPC. Resolved as a **private
+`bedrock-runtime` Interface VPC endpoint (PrivateLink)** — model traffic never
+touches the internet, and the IAM policy is conditioned on `aws:SourceVpce` so a
+stolen [[triage agent]] IRSA token is unusable outside the VPC. Region
+`us-west-2`, auth via IRSA (no static key).

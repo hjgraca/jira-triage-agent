@@ -35,6 +35,7 @@ const dedupe = new DedupeCache();
 const limiter = new SpawnLimiter({
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT || '3', 10),
   ceiling: parseInt(process.env.SPAWN_CEILING || '60', 10),
+  dailyBudget: parseInt(process.env.DAILY_BUDGET || '500', 10),
 });
 
 // Log only structured, non-sensitive fields — never the raw payload or pi's
