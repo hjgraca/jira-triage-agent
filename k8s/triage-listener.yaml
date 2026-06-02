@@ -120,6 +120,13 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-type: "classic"
 spec:
   type: LoadBalancer
+  # R10b origin lock: only CloudFront may reach this public LB. Populate from
+  #   terraform -chdir=terraform output -json cloudfront_origin_cidrs
+  # (the com.amazonaws.global.cloudfront.origin-facing prefix list). Until these
+  # are set the LB is open — set them before registering the Jira webhook.
+  # loadBalancerSourceRanges:
+  #   - <cloudfront-origin-cidr-1>
+  #   - <cloudfront-origin-cidr-2>
   selector:
     app.kubernetes.io/name: triage-listener
   ports:
