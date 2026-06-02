@@ -177,9 +177,13 @@ cmd_transitions() {
 
 cmd_transition() {
   # transition KEY TRANSITION_ID — move the issue through a workflow transition.
+  # Guarded by an allowed-set (config "transitions") so a prompt-injected agent
+  # can't move a ticket to an arbitrary status. Fails closed when the set is
+  # absent or empty.
   # VERIFY (Step 0.5): used for status changes and, if confirmed, issue-type
   # changes that require a transition screen.
   local key="${1:?usage: transition KEY TRANSITION_ID}" tid="${2:?usage: transition KEY TRANSITION_ID}"
+  _allowed transitions "$tid" || _die "transition '$tid' not in allowed set"
   _api POST "/issue/${key}/transitions" "$(jq -n --arg t "$tid" '{transition: {id: $t}}')"
   echo "{\"status\":\"transitioned\",\"key\":\"${key}\"}"
 }
@@ -193,10 +197,13 @@ cmd_add_label() {
 }
 
 cmd_remove_label() {
-  # remove-label KEY LABEL — used to clear the `triage` work-queue flag (R6a).
-  # The trigger label is allowed to be removed without being in the allowed set
-  # (it is the queue flag, not a classification value).
+  # remove-label KEY LABEL — clears the `triage` work-queue flag (R6a). Restricted
+  # to the trigger label ONLY, so an injected agent can't strip protective
+  # labels off a ticket. The trigger label is configurable via TRIGGER_LABEL
+  # (default "triage") to match the listener's gate.
   local key="${1:?usage: remove-label KEY LABEL}" label="${2:?usage: remove-label KEY LABEL}"
+  local trigger="${TRIGGER_LABEL:-triage}"
+  [ "$label" = "$trigger" ] || _die "remove-label only permitted for the trigger label '$trigger', got '$label'"
   _api PUT "/issue/${key}" "$(jq -n --arg l "$label" '{update: {labels: [{remove: $l}]}}')"
   echo "{\"status\":\"unlabeled\",\"key\":\"${key}\",\"label\":\"${label}\"}"
 }

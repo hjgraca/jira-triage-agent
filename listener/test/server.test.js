@@ -11,7 +11,7 @@ process.env.AUTHORIZED_ACTORS = 'ALLOWED-1';
 process.env.PI_BIN = '/usr/bin/true'; // spawning this exits 0 immediately, no real pi
 
 const SECRET = process.env.WEBHOOK_HMAC_SECRET;
-const { createServer, state } = require('../src/server');
+const { createServer, state, limiter } = require('../src/server');
 
 let server;
 let port;
@@ -104,6 +104,32 @@ test('unauthorized label-add → 200 drop, no spawn', async () => {
     'x-atlassian-webhook-identifier': 'wid-unauth',
   });
   assert.strictEqual(r.status, 200);
+});
+
+test('spawn lifecycle releases the limiter slot (active drains to 0)', async () => {
+  // /usr/bin/true exits 0 immediately. After all in-flight runs settle, active
+  // must drain to 0 — a leaked slot (missed release) would leave it >0; the
+  // release-once guard prevents underflow on the error+close double-fire.
+  const body = JSON.stringify({
+    webhookEvent: 'jira:issue_created',
+    user: { accountId: 'X' },
+    issue: { key: 'KAN-SLOT' },
+  });
+  await post('/jira-webhook', body, {
+    'x-hub-signature': sign(body),
+    'x-atlassian-webhook-identifier': 'wid-slot',
+  });
+  // Poll until the limiter drains (children from this and earlier tests exit).
+  for (let i = 0; i < 50 && limiter.active > 0; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.strictEqual(limiter.active, 0, 'limiter.active drained to 0');
+});
+
+test('TRIAGE_MARKER is exported from gate and shared with the server', () => {
+  const { TRIAGE_MARKER } = require('../src/gate');
+  assert.ok(typeof TRIAGE_MARKER === 'string' && TRIAGE_MARKER.length > 0);
+  assert.strictEqual(state.triageMarker, TRIAGE_MARKER);
 });
 
 test('/readyz reflects fail-closed startup gate', async () => {

@@ -73,6 +73,14 @@ resource "aws_vpc_endpoint" "bedrock_runtime" {
 # the underlying foundation model in any of the profile's regions.
 data "aws_caller_identity" "current" {}
 
+locals {
+  # A cross-region inference profile id (e.g. "us.anthropic.claude-...") invokes
+  # the underlying foundation model, whose id drops the leading region prefix
+  # ("us.", "eu.", "apac."). Scope the foundation-model ARN to exactly that
+  # model rather than "*", so the policy matches its "scoped to one model" claim.
+  bedrock_foundation_model = replace(var.bedrock_model_id, "/^(us|eu|apac)\\./", "")
+}
+
 data "aws_iam_policy_document" "bedrock_invoke" {
   statement {
     sid    = "InvokeTriageModel"
@@ -82,7 +90,7 @@ data "aws_iam_policy_document" "bedrock_invoke" {
       "bedrock:InvokeModelWithResponseStream",
     ]
     resources = [
-      "arn:aws:bedrock:*::foundation-model/*",
+      "arn:aws:bedrock:*::foundation-model/${local.bedrock_foundation_model}",
       "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}",
     ]
 

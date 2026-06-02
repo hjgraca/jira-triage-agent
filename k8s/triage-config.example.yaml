@@ -23,5 +23,6 @@ data:
       "labels": ["bug", "enhancement", "needs-info", "ready-for-agent", "ready-for-human", "wontfix", "needs-human"],
       "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
       "assignees": ["REPLACE_WITH_ONCALL_ACCOUNT_ID"],
-      "issuetypes": ["Bug", "Story", "Task"]
+      "issuetypes": ["Bug", "Story", "Task"],
+      "transitions": []
     }

@@ -26,6 +26,11 @@ class DedupeCache {
     return false;
   }
 
+  /** Remove an id so a redelivery can be reprocessed (e.g. after a failed spawn). */
+  evict(id) {
+    if (id) this.seen.delete(id);
+  }
+
   /** Drop expired entries (call periodically to bound memory). */
   sweep() {
     const t = this.now();
