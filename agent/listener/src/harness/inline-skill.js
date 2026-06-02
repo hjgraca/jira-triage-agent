@@ -10,15 +10,20 @@
 
 const fs = require('fs');
 const path = require('path');
+const { splitFrontmatter } = require('../agent-def');
 
-// Cache SKILL.md per skillPath so we read it once, not per webhook.
+// Cache the rubric BODY per skillPath so we read it once, not per webhook. The
+// body is SKILL.md with its YAML frontmatter stripped — the frontmatter is the
+// machine-readable agent definition (name/prompt/...), not rubric prose, so we
+// don't inline it into the model prompt.
 const rubricCache = new Map();
 
 function loadRubric(skillPath) {
   if (rubricCache.has(skillPath)) return rubricCache.get(skillPath);
   let rubric;
   try {
-    rubric = fs.readFileSync(path.join(skillPath, 'SKILL.md'), 'utf8');
+    const text = fs.readFileSync(path.join(skillPath, 'SKILL.md'), 'utf8');
+    rubric = splitFrontmatter(text).body;
   } catch {
     rubric = ''; // fail soft: the prompt still names the scripts to run
   }

@@ -3,13 +3,25 @@
 An autonomous **Jira triage agent** built on the [pi.dev](https://github.com/earendil-works/pi)
 coding harness, plus the EKS **workshop lab** used to develop and demo it.
 
-The agent watches for a `triage` label on a Jira ticket, reads the ticket and the
-relevant GitLab source, classifies it (category / state / severity), sets fields
-within an allow-listed set, posts an audit comment, and — for multi-repo
-features — proposes a work split across teams. It runs headless in Kubernetes on
-a **pluggable coding-agent harness** — [pi.dev](https://github.com/earendil-works/pi)
-(Bedrock via IRSA), [kiro-cli](https://kiro.dev), or [opencode](https://opencode.ai),
-or bring your own (see [harness adapters](agent/listener/src/harness/README.md)).
+The default agent watches for a `triage` label on a Jira ticket, reads the ticket
+and the relevant GitLab source, classifies it (category / state / severity), sets
+fields within an allow-listed set, posts an audit comment, and — for multi-repo
+features — proposes a work split across teams.
+
+Under the hood the listener is a **generic runner** composed of three pluggable
+pieces — **trigger × agent × harness**:
+
+- **trigger** — how an event is authenticated, parsed, and gated (`jira` webhook,
+  or a `generic` signed POST).
+- **agent** — *what the agent is*, defined by the **skill's `SKILL.md`
+  frontmatter** (its prompt, rubric, tools). Point at a different skill → a
+  different agent, no code change. See [authoring agents](docs/customer-install/07-authoring-agents.md).
+- **harness** — the coding-agent CLI that runs it:
+  [pi.dev](https://github.com/earendil-works/pi) (Bedrock via IRSA),
+  [kiro-cli](https://kiro.dev), or [opencode](https://opencode.ai), or bring your
+  own (see [harness adapters](agent/listener/src/harness/README.md)).
+
+It runs headless in Kubernetes with the same guardrails regardless of the three choices.
 
 ---
 

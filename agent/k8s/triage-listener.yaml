@@ -59,8 +59,18 @@ spec:
               value: "8080"
             - name: WEBHOOK_PATH
               value: "/jira-webhook"
-            - name: SKILL_PATH
+            # The AGENT DEFINITION: the skill dir whose SKILL.md frontmatter
+            # declares the prompt that drives the agent. Point this at a
+            # different skill to run a different agent — no code/image change
+            # (as long as the image bakes that skill in). SKILL_PATH is a
+            # back-compat alias.
+            - name: AGENT_PATH
               value: "/skills/jira-triage"
+            # Which TRIGGER adapter authenticates/parses/gates the webhook:
+            #   "jira"    (default) Jira webhook / Automation rule
+            #   "generic" signed POST whose JSON body becomes the prompt vars
+            - name: TRIGGER
+              value: "jira"
             # Which headless harness to spawn per webhook:
             #   "pi"       (default) Bedrock via IRSA — no key needed
             #   "kiro-cli" its own backend via KIRO_API_KEY
