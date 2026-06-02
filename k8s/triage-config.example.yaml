@@ -4,12 +4,18 @@
 # /etc/triage/config.json and FAIL CLOSED on any value not listed here.
 #
 #   priorities  — exact Jira priority names for the project's scheme
-#   assignees   — Jira accountIds of the on-call pool ONLY (R2c: no black-holes)
-#   issuetypes  — exact issue type names
+#   assignees   — Jira accountIds of the on-call pool ONLY (R2c: no black-holes).
+#                 Empty = the agent never auto-assigns (it recommends an owner in
+#                 the comment instead). The KAN probe found no assignable humans,
+#                 so this stays [] until a real on-call pool exists.
+#   issuetypes  — exact issue type names. KAN has Task/Story/Epic (+ Subtask,
+#                 excluded — converting to/from subtask is special-cased). No Bug
+#                 type exists; "bug" is a category LABEL, not an issue type.
 #   labels      — the curated label set the agent may apply
+#   transitions — allowed workflow transition IDs (KAN: 11 To Do, 21 In Progress,
+#                 31 In Review, 41 Done). Empty = the agent makes no status moves.
 #
-# Confirm each against the live project, e.g.:
-#   jira.sh get KAN-1 | jq '.fields.priority, .fields.issuetype, .fields.labels'
+# Values below are the confirmed live KAN sets (Step 0.5 probe, 2026-06-02).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,7 +28,7 @@ data:
     {
       "labels": ["bug", "enhancement", "needs-info", "ready-for-agent", "ready-for-human", "wontfix", "needs-human"],
       "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
-      "assignees": ["REPLACE_WITH_ONCALL_ACCOUNT_ID"],
-      "issuetypes": ["Bug", "Story", "Task"],
+      "assignees": [],
+      "issuetypes": ["Task", "Story", "Epic"],
       "transitions": []
     }

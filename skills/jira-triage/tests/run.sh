@@ -172,9 +172,10 @@ exit 0
 STUB
 chmod +x "$STUB_DIR/curl"
 cap="$(mktemp)"
-run_jira "$cap" "$FIX/issue-KAN-5.json" set-fields KAN-5 issuetype=Bug >/dev/null 2>&1
+# fixture issuetype is Task; Story is a real in-set change (KAN has no Bug type).
+run_jira "$cap" "$FIX/issue-KAN-5.json" set-fields KAN-5 issuetype=Story >/dev/null 2>&1
 flat="$(tr -d '\n ' < "$cap")"
-if echo "$flat" | grep -q '"issuetype":{"name":"Bug"}'; then ok "T12 in-set issue-type PUT body"; else nope "T12 in-set issue-type PUT body" "$(cat "$cap")"; fi
+if echo "$flat" | grep -q '"issuetype":{"name":"Story"}'; then ok "T12 in-set issue-type PUT body"; else nope "T12 in-set issue-type PUT body" "$(cat "$cap")"; fi
 
 # --- T13: cross-language marker contract -------------------------------------
 # The listener's TRIAGE_MARKER (gate.js) must be a substring of the disclaimer
