@@ -15,8 +15,9 @@ terraform/               standalone IRSA + optional CloudFront for an EXISTING c
 ```
 
 **Pluggable harness:** the listener spawns whichever coding-agent CLI `HARNESS`
-names (default `pi`; `kiro-cli` built in). Swapping it changes only one adapter
-file under `listener/src/harness/` — the gate, limits, and skill are unchanged.
+names (default `pi`; `kiro-cli` and `opencode` built in). Swapping it changes
+only one adapter file under `listener/src/harness/` — the gate, limits, and skill
+are unchanged.
 See [listener/src/harness/README.md](listener/src/harness/README.md) and
 [../docs/customer-install/03b-choose-harness.md](../docs/customer-install/03b-choose-harness.md).
 

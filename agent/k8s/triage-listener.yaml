@@ -61,8 +61,11 @@ spec:
               value: "/jira-webhook"
             - name: SKILL_PATH
               value: "/skills/jira-triage"
-            # Which headless harness to spawn per webhook: "pi" (default,
-            # Bedrock via IRSA) or "kiro-cli" (its own backend via KIRO_API_KEY).
+            # Which headless harness to spawn per webhook:
+            #   "pi"       (default) Bedrock via IRSA — no key needed
+            #   "kiro-cli" its own backend via KIRO_API_KEY
+            #   "opencode" `opencode run`; provider creds via OPENCODE_PROVIDER_KEY
+            #              (mapped to the provider's env var below) or auth.json
             # The image must have that harness baked in (Dockerfile build args).
             - name: HARNESS
               value: "pi"
@@ -105,6 +108,13 @@ spec:
             # without this key present in the secret.
             - name: KIRO_API_KEY
               valueFrom: { secretKeyRef: { name: triage-secrets, key: kiro-api-key, optional: true } }
+            # Provider credential for the opencode harness (HARNESS=opencode).
+            # opencode reads provider env vars; set the env NAME its provider
+            # expects (e.g. ANTHROPIC_API_KEY) by editing the `name:` below, or
+            # bake an auth.json into the image instead. optional:true so other
+            # harnesses start without it.
+            - name: ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: triage-secrets, key: opencode-provider-key, optional: true } }
           volumeMounts:
             # Allowed-value sets the skill reads (R2); fail-closed if absent.
             - name: triage-config

@@ -11,8 +11,8 @@ under `agent/` — it does **not** create a cluster, a VPC, or GitLab (that's th
 - A public HTTPS webhook endpoint — via **CloudFront** (no domain needed) or your
   own ALB + domain + TLS.
 - An **IRSA role** scoped to one Bedrock model (no static model credential).
-- A pluggable **coding-agent harness** — **pi** (Bedrock via IRSA) or
-  **kiro-cli** (its own backend), or bring your own. See
+- A pluggable **coding-agent harness** — **pi** (Bedrock via IRSA),
+  **kiro-cli**, or **opencode**, or bring your own. See
   [Choose your harness](03b-choose-harness.md).
 - The **`triage` namespace**: ServiceAccount, NetworkPolicy, ConfigMap, Secret.
 
