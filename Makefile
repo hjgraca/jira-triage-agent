@@ -24,7 +24,7 @@ TRIAGE_IMAGE_TAG ?= latest
 ACCOUNT_ID = $(shell aws sts get-caller-identity --query Account --output text)
 TRIAGE_IMAGE = $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(TRIAGE_ECR_REPO):$(TRIAGE_IMAGE_TAG)
 
-.PHONY: cluster kubeconfig apps up gitlab triage-image destroy clean-k8s-lb
+.PHONY: cluster kubeconfig apps up gitlab triage triage-image destroy clean-k8s-lb
 
 cluster:
 	cd $(TF_DIR) && terraform init && terraform apply \
@@ -33,7 +33,7 @@ cluster:
 kubeconfig:
 	aws eks update-kubeconfig --region $(REGION) --name $(CLUSTER)
 
-apps: gitlab
+apps: gitlab triage
 
 gitlab:
 	helm repo add gitlab https://charts.gitlab.io/
@@ -59,6 +59,28 @@ triage-image:
 	docker build -f docker/triage/Dockerfile -t $(TRIAGE_IMAGE) .
 	docker push $(TRIAGE_IMAGE)
 	@echo "Pushed $(TRIAGE_IMAGE)"
+
+## Deploy the Jira triage agent. Applies namespace/SA, config, secrets,
+## NetworkPolicy, and the listener (Deployment + dedicated LoadBalancer).
+## Prerequisites the operator must do first (see README "Triage agent"):
+##   - `make triage-image` to build/push the image, then set <TRIAGE_IMAGE> in
+##     k8s/triage-listener.yaml
+##   - set the IRSA role ARN in k8s/triage-namespace.yaml
+##   - create k8s/triage-secrets.yaml and k8s/triage-config.yaml from templates
+##   - set AUTHORIZED_ACTORS + JIRA_BASE_URL in k8s/triage-listener.yaml
+triage:
+	@if [ ! -f k8s/triage-secrets.yaml ] || [ ! -f k8s/triage-config.yaml ]; then \
+		echo "Skipping triage: create k8s/triage-secrets.yaml and k8s/triage-config.yaml"; \
+		echo "from the .example templates first (see README 'Triage agent'). Then: make triage"; \
+	else \
+		kubectl apply -f k8s/triage-namespace.yaml; \
+		kubectl apply -f k8s/triage-config.yaml; \
+		kubectl apply -f k8s/triage-secrets.yaml; \
+		kubectl apply -f k8s/triage-netpol.yaml; \
+		kubectl apply -f k8s/triage-listener.yaml; \
+		echo "Triage listener applied. Get its LB hostname for CloudFront:"; \
+		echo "  kubectl get svc -n triage triage-listener -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"; \
+	fi
 
 up: cluster kubeconfig apps
 
