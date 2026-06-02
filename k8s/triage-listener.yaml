@@ -48,7 +48,7 @@ spec:
       containers:
         - name: listener
           # Replace with the pushed image (see Makefile triage-image target).
-          image: <TRIAGE_IMAGE>
+          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/triage-agent:latest
           # tini/--init is provided by the image entrypoint (KTD9) to reap
           # finished pi subprocesses.
           ports:
@@ -73,9 +73,9 @@ spec:
               value: "500"
             # Comma-separated Jira accountIds allowed to trigger via the label (R6b).
             - name: AUTHORIZED_ACTORS
-              value: "<COMMA_SEPARATED_ACCOUNT_IDS>"
+              value: "557058:2ead7aac-3eea-430f-9f79-4967084b8264"
             - name: JIRA_BASE_URL
-              value: "https://<your-site>.atlassian.net"
+              value: "https://henriquegraca.atlassian.net"
             - name: GITLAB_BASE_URL
               value: "http://gitlab-webservice-default.gitlab.svc"
             - name: TRIAGE_CONFIG
