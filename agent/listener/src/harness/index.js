@@ -16,10 +16,12 @@
 
 const pi = require('./pi');
 const kiroCli = require('./kiro-cli');
+const opencode = require('./opencode');
 
 const ADAPTERS = {
   pi,
   'kiro-cli': kiroCli,
+  opencode,
 };
 
 /**

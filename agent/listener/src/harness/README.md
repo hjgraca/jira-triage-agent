@@ -7,9 +7,11 @@ or your own — is chosen at runtime by the **`HARNESS`** env var and implemente
 by a small adapter in this directory.
 
 ```
-index.js     registry: HARNESS env -> adapter (default "pi")
-pi.js        pi.dev: streaming JSON, --skill, Bedrock via IRSA
-kiro-cli.js  kiro-cli: --no-interactive, rubric inlined, KIRO_API_KEY backend
+index.js         registry: HARNESS env -> adapter (default "pi")
+pi.js            pi.dev: streaming JSON, --skill, Bedrock via IRSA
+kiro-cli.js      kiro-cli: --no-interactive, rubric inlined, KIRO_API_KEY backend
+opencode.js      opencode: `opencode run --format json`, rubric inlined, provider creds
+inline-skill.js  shared helper: inline SKILL.md into the prompt (kiro + opencode)
 ```
 
 Everything else — the gate, dedupe, rate/spend limits, the watchdog, the
@@ -63,10 +65,27 @@ module.exports = {
 
 - If your harness can load a skill/rules directory by path (pi's `--skill`),
   point it at `ctx.skillPath`.
-- If it can't (kiro-cli), **inline the rubric**: read `SKILL.md` from
-  `ctx.skillPath` and prepend it to the prompt, and tell the agent to run
-  `scripts/jira.sh` / `scripts/gitlab.sh` as shell tools. See `kiro-cli.js`'s
-  `composePrompt()` for the pattern (it caches the file read).
+- If it can't (kiro-cli, opencode), **inline the rubric** with the shared
+  `inline-skill.js` helper: `composeInlineSkillPrompt(skillPath, basePrompt)`
+  reads `SKILL.md` (cached), names the `scripts/jira.sh` / `scripts/gitlab.sh`
+  tools, and appends the base prompt. Don't re-implement this per adapter.
+
+### Boundary: this contract is subprocess-shaped
+
+The contract assumes a harness you **spawn per ticket and that exits** — argv in,
+stdout/exit-code out. That fits "CLI run" modes: `pi`, `kiro-cli`,
+`opencode run`. It does **not** fit a harness that is *only* a long-lived HTTP
+server (e.g. `opencode serve`, where you'd `POST /session` then
+`POST /session/:id/message` against a daemon). A server-only harness has no
+per-ticket process and no exit code, and a persistent daemon fights the
+one-ephemeral-run-per-webhook security model (limiter slot, watchdog, egress
+fence are all per-spawn).
+
+If you must integrate a server-only harness, prefer its CLI "run" mode if it has
+one (opencode does — `opencode run`, optionally `--attach`-ed to a warm `serve`
+daemon, which keeps *this* contract intact). A true server client would be a
+second adapter *kind* — a deliberate extension, not a drop-in — and should be
+added as such rather than bent into `buildCommand`.
 
 ## Add your own harness
 

@@ -4,8 +4,9 @@
 #
 # Build args select which harnesses to install (keep the image lean — only
 # install what you run):
-#   --build-arg INSTALL_PI=true     (default) pi.dev, runs against Bedrock via IRSA
-#   --build-arg INSTALL_KIRO=true   kiro-cli, runs against its own backend (KIRO_API_KEY)
+#   --build-arg INSTALL_PI=true        (default) pi.dev, runs against Bedrock via IRSA
+#   --build-arg INSTALL_KIRO=true      kiro-cli, its own backend (KIRO_API_KEY)
+#   --build-arg INSTALL_OPENCODE=true  opencode, via `opencode run` (provider creds)
 #
 # Pinned to Node 20 LTS — pi's minimum Node version is undocumented (KTD9); 20
 # is the conservative floor. Platform pinned to linux/amd64 to match the EKS
@@ -14,6 +15,7 @@ FROM --platform=linux/amd64 node:20-slim
 
 ARG INSTALL_PI=true
 ARG INSTALL_KIRO=false
+ARG INSTALL_OPENCODE=false
 
 # tini as PID 1 reaps the one-shot harness subprocesses the listener spawns
 # (KTD2/KTD9 — node as PID 1 does not reap, so zombies would accumulate).
@@ -40,8 +42,18 @@ RUN if [ "$INSTALL_KIRO" = "true" ]; then \
       && /usr/local/bin/kiro-cli --version; \
     fi
 
+# opencode (https://opencode.ai/docs/cli). The installer drops the binary in
+# ~/.opencode/bin or ~/.local/bin; relocate onto a system PATH for the non-root
+# user. Fail the build if not found afterwards.
+RUN if [ "$INSTALL_OPENCODE" = "true" ]; then \
+      curl -fsSL https://opencode.ai/install | bash \
+      && bin="$(find /root/.opencode/bin /root/.local/bin "$HOME/.opencode/bin" "$HOME/.local/bin" -name opencode -type f 2>/dev/null | head -n1)" \
+      && [ -n "$bin" ] && install -m 0755 "$bin" /usr/local/bin/opencode \
+      && /usr/local/bin/opencode --version; \
+    fi
+
 # Non-root with a writable HOME so a harness can write its dotdir
-# (~/.pi, ~/.kiro / KIRO_HOME) (KTD11).
+# (~/.pi, ~/.kiro / KIRO_HOME, ~/.local/share/opencode) (KTD11).
 ENV HOME=/home/triage
 RUN useradd --uid 10001 --create-home --home-dir /home/triage triage
 
