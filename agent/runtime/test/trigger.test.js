@@ -46,6 +46,43 @@ test('jira: issue_created spawns with the key as a var', () => {
   assert.deepStrictEqual(v, { action: 'spawn', vars: { key: 'KAN-9' } });
 });
 
+test('jira: issue_updated WITH triage label by allowed actor spawns; WITHOUT label is ineligible', () => {
+  const withLabel = jira.decide(
+    {
+      webhookEvent: 'jira:issue_updated',
+      user: { accountId: 'ALLOWED-1' },
+      issue: { key: 'KAN-5' },
+      changelog: { items: [{ field: 'labels', fromString: '', toString: 'triage' }] },
+    },
+    def(),
+    state()
+  );
+  assert.deepStrictEqual(withLabel, { action: 'spawn', vars: { key: 'KAN-5' } });
+  const noLabel = jira.decide(
+    {
+      webhookEvent: 'jira:issue_updated',
+      user: { accountId: 'ALLOWED-1' },
+      issue: { key: 'KAN-5' },
+      changelog: { items: [{ field: 'summary', fromString: 'a', toString: 'b' }] },
+    },
+    def(),
+    state()
+  );
+  assert.strictEqual(noLabel.action, 'drop');
+  assert.match(noLabel.reason, /ineligible/);
+});
+
+test('jira.triageLabelAdded detects an add vs a pre-existing label', () => {
+  assert.strictEqual(
+    jira.triageLabelAdded({ changelog: { items: [{ field: 'labels', fromString: 'x', toString: 'x triage' }] } }),
+    true
+  );
+  assert.strictEqual(
+    jira.triageLabelAdded({ changelog: { items: [{ field: 'labels', fromString: 'triage', toString: 'triage done' }] } }),
+    false
+  );
+});
+
 test('jira: automation label-add from allowed actor spawns; unauthorized drops', () => {
   const ok = jira.decide(
     { webhookEvent: 'automation:label-added', user: { accountId: 'ALLOWED-1' }, issue: { key: 'KAN-1' } },

@@ -45,24 +45,24 @@ terraform output -raw triage_bedrock_role_arn      # → into the SA annotation 
 ## Step 2 — Build and push the image
 
 The image is `linux/amd64` (match it to your node arch). Build context is
-`agent/`. Each harness has its own Dockerfile under `agent/deploy/docker/`, all
-built FROM a shared `base.Dockerfile` (the runtime + agents). Pick the harness —
-see [Choose your harness](03b-choose-harness.md).
+`agent/`. It's built as **three layers, agent-blank until the last** — base
+(engine) → `<harness>` (engine + CLI) → `<agent>` (the one agent). Each agent
+owns its `Dockerfile` under `agent/agents/<name>/`. One agent per image, deployed
+in isolation. Pick the harness — see [Choose your harness](03b-choose-harness.md).
 
 ```bash
 REPO=<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
 aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin "${REPO%/*}"
 
-# Build the shared base once, then the selected harness FROM it (default: pi).
-docker buildx build --platform linux/amd64 \
-  -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
-docker buildx build --platform linux/amd64 \
-  -f agent/deploy/docker/pi.Dockerfile --build-arg BASE=triage-base:local \
-  -t "$REPO:latest" --push agent
-# (swap pi.Dockerfile → kiro.Dockerfile / opencode.Dockerfile for another harness)
+# base (engine) → pi (engine + CLI) → jira-triage (one agent).
+docker build -f agent/deploy/docker/base.Dockerfile   -t triage-base:local       agent
+docker build -f agent/deploy/docker/pi.Dockerfile     --build-arg BASE=triage-base:local -t triage-pi:local agent
+docker build -f agent/agents/jira-triage/Dockerfile   --build-arg BASE=triage-pi:local   -t "$REPO:latest"  agent
+docker push "$REPO:latest"
+# (swap pi.Dockerfile → kiro/opencode; swap the agent Dockerfile for another agent)
 ```
 
-(The workshop equivalent is `make triage-image HARNESS=pi`.)
+(The one-liner is `make triage-image AGENT=jira-triage HARNESS=pi`.)
 
 ## Step 3 — Fill in the manifests
 
@@ -158,7 +158,7 @@ writes to real tickets:
       if your instance differs.
 - [ ] **(DC/Server) Captured HMAC signature.** Trigger one real webhook to a
       logging endpoint, capture the actual `X-Hub-Signature`, and confirm the
-      algorithm/prefix matches `gate.js` (assumed `sha256=`).
+      algorithm/prefix matches `runtime/listener/auth.js` (assumed `sha256=`).
 - [ ] **LB origin lock (R10b).** `loadBalancerSourceRanges` is populated with
       `cloudfront_origin_cidrs` and re-applied. A direct POST to the LB is refused.
 - [ ] **NetworkPolicy enforcement.** `agent/deploy/k8s/triage-netpol.yaml` is inert

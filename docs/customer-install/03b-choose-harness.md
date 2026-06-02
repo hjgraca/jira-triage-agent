@@ -42,15 +42,14 @@ Set `HARNESS` in `agent/deploy/k8s/triage-listener.yaml`:
   value: "pi"        # or "kiro-cli"
 ```
 
-…and make sure the image is built from that harness's Dockerfile (each harness
-has its own under `agent/deploy/docker/`, all built FROM a shared `base.Dockerfile`),
-and the required credential is present. The simplest path is `make triage-image
-HARNESS=<name>`; the raw two-step build is shown per harness below.
+The harness is a **build layer**, not a runtime switch: the image is built as
+base (engine) → `<harness>` (engine + CLI) → `<agent>` (the one agent). Pick the
+harness at build time with `make triage-image AGENT=<name> HARNESS=<name>`; the
+raw three-step build is shown per harness below.
 
 ### Using pi (default)
 
-- **Image:** `make triage-image HARNESS=pi` (or build `base.Dockerfile` then
-  `pi.Dockerfile`).
+- **Image:** `make triage-image AGENT=jira-triage HARNESS=pi`.
 - **Credential:** none in the pod — the IRSA ServiceAccount supplies Bedrock
   access. Make sure `agent/deploy/terraform`'s `bedrock_model_id` matches `TRIAGE_MODEL`.
 - Nothing else to do; this is the path proven end-to-end in the workshop.
@@ -59,13 +58,11 @@ HARNESS=<name>`; the raw two-step build is shown per harness below.
 
 1. **Build the image with kiro:**
    ```bash
-   make triage-image HARNESS=kiro
-   # or, raw: build the base, then the kiro image FROM it
-   docker buildx build --platform linux/amd64 \
-     -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
-   docker buildx build --platform linux/amd64 \
-     -f agent/deploy/docker/kiro.Dockerfile --build-arg BASE=triage-base:local \
-     -t "$REPO:latest" --push agent
+   make triage-image AGENT=jira-triage HARNESS=kiro
+   # or, raw: base (engine) → kiro (engine + CLI) → agent (one agent)
+   docker build -f agent/deploy/docker/base.Dockerfile    -t triage-base:local       agent
+   docker build -f agent/deploy/docker/kiro.Dockerfile    --build-arg BASE=triage-base:local -t triage-kiro:local agent
+   docker build -f agent/agents/jira-triage/Dockerfile    --build-arg BASE=triage-kiro:local -t "$REPO:latest"  agent
    ```
 2. **Add the API key** to `agent/deploy/k8s/triage-secrets.yaml`:
    ```yaml
@@ -88,13 +85,11 @@ HARNESS=<name>`; the raw two-step build is shown per harness below.
 
 1. **Build the image with opencode:**
    ```bash
-   make triage-image HARNESS=opencode
-   # or, raw:
-   docker buildx build --platform linux/amd64 \
-     -f agent/deploy/docker/base.Dockerfile -t triage-base:local --load agent
-   docker buildx build --platform linux/amd64 \
-     -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=triage-base:local \
-     -t "$REPO:latest" --push agent
+   make triage-image AGENT=jira-triage HARNESS=opencode
+   # or, raw: base → opencode → agent
+   docker build -f agent/deploy/docker/base.Dockerfile     -t triage-base:local         agent
+   docker build -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=triage-base:local -t triage-opencode:local agent
+   docker build -f agent/agents/jira-triage/Dockerfile     --build-arg BASE=triage-opencode:local -t "$REPO:latest" agent
    ```
 2. **Add the provider key** to `agent/deploy/k8s/triage-secrets.yaml`:
    ```yaml

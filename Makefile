@@ -23,15 +23,19 @@ TF_DIR         := workshop/terraform
 # subcharts; they are removed in chart 10.x (GitLab 19.0).
 GITLAB_CHART_VERSION ?= 8.11.8
 
-# Triage agent image. Pushed to ECR in the cluster's account/region.
-# HARNESS selects which per-harness Dockerfile to build (pi|kiro|opencode); all
-# build FROM a shared base (deploy/docker/base.Dockerfile).
+# Agent image. Built as three layers, agent-blank until the last:
+#   base (engine) → <HARNESS> (engine + CLI) → <AGENT> (one agent).
+# AGENT selects agents/<name>/Dockerfile (the final image); HARNESS selects the
+# CLI (pi|kiro|opencode). One agent per image, deployed in isolation.
 TRIAGE_ECR_REPO ?= triage-agent
-TRIAGE_IMAGE_TAG ?= latest
+AGENT   ?= jira-triage
 HARNESS ?= pi
+# Tag encodes agent+harness so distinct combos don't clobber each other in ECR.
+TRIAGE_IMAGE_TAG ?= $(AGENT)-$(HARNESS)
 ACCOUNT_ID = $(shell aws sts get-caller-identity --query Account --output text)
 TRIAGE_IMAGE = $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(TRIAGE_ECR_REPO):$(TRIAGE_IMAGE_TAG)
-TRIAGE_BASE_TAG := triage-base:local
+TRIAGE_BASE_TAG    := triage-base:local
+TRIAGE_HARNESS_TAG := triage-$(HARNESS):local
 
 .PHONY: cluster kubeconfig apps up gitlab triage triage-image destroy clean-k8s-lb
 
@@ -58,9 +62,9 @@ gitlab:
 	# source range in this manifest when your public IP changes.
 	kubectl apply -f workshop/k8s/gitlab-shell-ssh-lb.yaml
 
-## Build and push the triage agent image for HARNESS (default pi).
-## Builds the shared base (runtime + agents) once, then the per-harness image
-## FROM it. Override the harness: `make triage-image HARNESS=kiro`.
+## Build and push one agent image: AGENT (default jira-triage) × HARNESS (pi).
+## Three layers: base (engine) → harness (engine + CLI) → agent (one agent).
+##   make triage-image AGENT=jira-triage HARNESS=kiro
 ## Creates the ECR repo if absent, logs in, builds, and pushes.
 triage-image:
 	aws ecr describe-repositories --region $(REGION) --repository-names $(TRIAGE_ECR_REPO) >/dev/null 2>&1 \
@@ -68,14 +72,16 @@ triage-image:
 	aws ecr get-login-password --region $(REGION) \
 		| docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
 	# Pin linux/amd64 to match the EKS node arch (m5 = x86_64). Build context is
-	# agent/. Base first (listener + trigger + harness + agents), then the
-	# selected harness FROM it.
+	# agent/. base (engine) → harness (engine + CLI) → agent (one agent).
 	docker buildx build --platform linux/amd64 \
 		-f agent/deploy/docker/base.Dockerfile -t $(TRIAGE_BASE_TAG) --load agent
 	docker buildx build --platform linux/amd64 \
 		-f agent/deploy/docker/$(HARNESS).Dockerfile --build-arg BASE=$(TRIAGE_BASE_TAG) \
+		-t $(TRIAGE_HARNESS_TAG) --load agent
+	docker buildx build --platform linux/amd64 \
+		-f agent/agents/$(AGENT)/Dockerfile --build-arg BASE=$(TRIAGE_HARNESS_TAG) \
 		-t $(TRIAGE_IMAGE) --push agent
-	@echo "Pushed $(TRIAGE_IMAGE) (harness=$(HARNESS), linux/amd64)"
+	@echo "Pushed $(TRIAGE_IMAGE) (agent=$(AGENT), harness=$(HARNESS), linux/amd64)"
 
 ## Deploy the Jira triage agent. Applies namespace/SA, config, secrets,
 ## NetworkPolicy, and the listener (Deployment + dedicated LoadBalancer).
