@@ -41,6 +41,7 @@ Do these in sequence. Each page ends by pointing at the next.
 4. **[Deploy the agent](04-deploy-agent.md)** — terraform (IRSA + CloudFront), build/push the image, fill in manifests, `kubectl apply`, lock the origin, run the pre-launch checklist.
 5. **[Operations](05-operations.md)** — verify, monitor, rotate credentials, tune cost, troubleshoot.
 6. **[Security](06-security.md)** — the trust model and what you must confirm in your environment.
+7. **[Authoring agents](07-authoring-agents.md)** — the listener is a generic runner; the skill's `SKILL.md` frontmatter defines the agent. Write a new agent without touching code.
 
 ## How it works (one paragraph)
 

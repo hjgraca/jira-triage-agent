@@ -1,47 +1,58 @@
 'use strict';
 
-// Webhook listener HTTP server. Validates and gates inbound Jira webhooks, acks
-// fast (KTD3), then spawns a one-shot `pi --mode json` triage run off the
-// request path. Pure decision logic lives in gate.js / limits.js; this file is
-// the I/O shell.
+// Generic agent-runner HTTP server. It is NOT triage-specific: it authenticates
+// and gates an inbound webhook (via a TRIGGER adapter), acks fast (KTD3), then
+// spawns a one-shot coding-agent run (via a HARNESS adapter) whose PROMPT comes
+// from the agent definition (the skill's SKILL.md frontmatter). Swap the skill
+// (AGENT_PATH) → a different agent; swap TRIGGER → a different event source;
+// swap HARNESS → a different coding CLI. This file is just the I/O shell + the
+// per-run lifecycle invariants.
 
 const http = require('http');
 const { spawn } = require('child_process');
-const { verifySignature, verifySharedSecret, decide, TRIAGE_MARKER } = require('./gate');
 const { DedupeCache, SpawnLimiter } = require('./limits');
 const { getAdapter } = require('./harness');
+const { getTrigger } = require('./trigger');
+const { loadAgentDef, renderPrompt } = require('./agent-def');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || '/jira-webhook';
 const HMAC_SECRET = process.env.WEBHOOK_HMAC_SECRET || '';
-// Shared-secret bearer for the Jira Automation path (the rule can't compute an
-// HMAC). Empty → that path is disabled and only HMAC is accepted.
+// Shared-secret bearer for callers that can't compute an HMAC (e.g. Jira Cloud
+// Automation). Empty → only HMAC is accepted.
 const AUTOMATION_SECRET = process.env.AUTOMATION_SHARED_SECRET || '';
-const AUTOMATION_TOKEN_HEADER = 'x-triage-token';
-// Which coding-agent harness to spawn per webhook (pi, kiro-cli, …). The
-// adapter owns the argv + output handling; resolved once at load so a bad
-// HARNESS fails fast. See src/harness/README.md.
+
+// Resolve the three pluggable pieces once at load so a bad name fails fast:
+//   TRIGGER  — how to authenticate/parse/gate the webhook (default jira)
+//   HARNESS  — which coding-agent CLI to spawn (default pi)
+//   AGENT_PATH (a.k.a. SKILL_PATH) — the skill dir whose SKILL.md frontmatter
+//              IS the agent definition (its prompt drives what the agent does).
+const { name: TRIGGER_NAME, trigger } = getTrigger(process.env.TRIGGER);
 const { name: HARNESS_NAME, adapter: harness } = getAdapter(process.env.HARNESS);
-const TRIAGE_MODEL =
-  process.env.TRIAGE_MODEL || process.env.PI_MODEL || 'us.anthropic.claude-sonnet-4-6';
-const SKILL_PATH = process.env.SKILL_PATH || '/skills/jira-triage';
-// Watchdog ceiling for a single triage run; a child exceeding it is killed so
-// it can't hold a limiter slot forever. TRIAGE_TIMEOUT_MS is harness-neutral;
-// PI_TIMEOUT_MS is kept as a back-compat alias.
-const TRIAGE_TIMEOUT_MS = parseInt(
+const SKILL_PATH = process.env.AGENT_PATH || process.env.SKILL_PATH || '/skills/jira-triage';
+const agentDef = loadAgentDef(SKILL_PATH);
+
+// Model precedence: explicit env wins, else the agent definition, else default.
+const RUN_MODEL =
+  process.env.TRIAGE_MODEL || process.env.PI_MODEL || agentDef.model || 'us.anthropic.claude-sonnet-4-6';
+// Watchdog ceiling for a single run; a child exceeding it is killed so it can't
+// hold a limiter slot forever. (PI_TIMEOUT_MS kept as a back-compat alias.)
+const RUN_TIMEOUT_MS = parseInt(
   process.env.TRIAGE_TIMEOUT_MS || process.env.PI_TIMEOUT_MS || '300000',
   10
 );
-const AUTHORIZED = new Set(
-  (process.env.AUTHORIZED_ACTORS || '').split(',').map((s) => s.trim()).filter(Boolean)
-);
+// Authorized actors: env list ∪ the agent definition's own list. Either source
+// can declare who may trigger; the trigger adapter enforces it.
+const AUTHORIZED = new Set([
+  ...(process.env.AUTHORIZED_ACTORS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  ...agentDef.authorizedActors,
+]);
 
-// Mutable listener state (R7 loop guard, readiness).
+// Mutable listener state (loop guard, readiness).
 const state = {
-  botAccountId: null, // resolved at startup via GET /myself
-  ready: false, // readiness gates on botAccountId (fail closed, R7)
-  authorizedActors: AUTHORIZED,
-  triageMarker: TRIAGE_MARKER,
+  botActor: null, // resolved at startup (e.g. Jira /myself) for the loop guard
+  ready: false, // readiness gates on botActor (fail closed, R7)
+  loopMarker: agentDef.loopMarker, // sentinel the agent writes; loop guard drops echoes
 };
 
 const dedupe = new DedupeCache();
@@ -78,13 +89,21 @@ function readRawBody(req, limitBytes = 256 * 1024) {
 // Tracks live children so SIGTERM can signal them on shutdown.
 const liveChildren = new Set();
 
-function spawnTriage(key, dedupeId) {
-  // One-shot run via the active harness adapter. The adapter owns the argv and
-  // (for streaming harnesses) the stdout parsing; this shell owns the lifecycle
-  // (limiter slot, watchdog, dedupe-evict on spawn failure) so those invariants
-  // hold no matter which harness is plugged in.
-  const prompt = `Triage Jira issue ${key} using the jira-triage skill. Act on exactly this one ticket, then stop.`;
-  const cmd = harness.buildCommand({ key, skillPath: SKILL_PATH, model: TRIAGE_MODEL, prompt });
+function spawnRun(vars, dedupeId, label) {
+  // One-shot run via the active harness adapter. The PROMPT comes from the agent
+  // definition (skill frontmatter), rendered with this trigger's variables —
+  // the skill, not this code, decides what the agent does. The adapter owns the
+  // argv + (for streaming harnesses) stdout parsing; this shell owns the
+  // lifecycle (limiter slot, watchdog, dedupe-evict on spawn failure) so those
+  // invariants hold no matter which trigger/agent/harness is plugged in.
+  const prompt = renderPrompt(agentDef.prompt, vars);
+  const cmd = harness.buildCommand({
+    vars,
+    skillPath: SKILL_PATH,
+    model: RUN_MODEL,
+    prompt,
+    trustTools: agentDef.trustTools,
+  });
   const child = spawn(cmd.bin, cmd.args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     // Merge any adapter-declared env onto the inherited process env (IRSA vars,
@@ -112,10 +131,10 @@ function spawnTriage(key, dedupeId) {
   // 'close' nor 'error', so without this the slot leaks forever and enough
   // stuck runs silently wedge all triage. SIGTERM then SIGKILL after a grace.
   const watchdog = setTimeout(() => {
-    log({ msg: 'triage_timeout', key, harness: HARNESS_NAME, timeoutMs: TRIAGE_TIMEOUT_MS });
+    log({ msg: 'run_timeout', label, harness: HARNESS_NAME, timeoutMs: RUN_TIMEOUT_MS });
     child.kill('SIGTERM');
     setTimeout(() => child.kill('SIGKILL'), 10_000).unref();
-  }, TRIAGE_TIMEOUT_MS);
+  }, RUN_TIMEOUT_MS);
   watchdog.unref();
 
   // Streaming harnesses parse stdout line-by-line; non-streaming ones omit
@@ -130,33 +149,37 @@ function spawnTriage(key, dedupeId) {
     releaseOnce();
     // Streaming harnesses can report a clean terminal event (e.g. pi's
     // agent_end); log it for parity with the pre-adapter behavior.
-    if (runState.agentEnded) log({ msg: 'triage_done', key, harness: HARNESS_NAME });
+    if (runState.agentEnded) log({ msg: 'run_done', label, harness: HARNESS_NAME });
     const { toolError } = harness.finalize(code, runState);
-    log({ msg: 'triage_exit', key, harness: HARNESS_NAME, code, toolError });
+    log({ msg: 'run_exit', label, harness: HARNESS_NAME, code, toolError });
   });
   child.on('error', (err) => {
     releaseOnce();
-    // The run never happened — let Jira's redelivery of this identifier retry.
+    // The run never happened — let the trigger's redelivery of this id retry.
     dedupe.evict(dedupeId);
-    log({ msg: 'triage_spawn_error', key, harness: HARNESS_NAME, error: err.message });
+    log({ msg: 'run_spawn_error', label, harness: HARNESS_NAME, error: err.message });
   });
 }
 
+// Pick a short human label for logs from the trigger's vars (e.g. the Jira key)
+// without dumping the whole vars object (PII hygiene).
+function labelFor(vars) {
+  return vars.key || vars.id || vars.label || Object.values(vars)[0] || 'run';
+}
+
 async function handleWebhook(req, res, rawBody) {
-  // 1. Authenticate: EITHER a valid HMAC over the raw body (system webhook,
-  //    R10/R10a) OR a valid shared-secret bearer (Jira Automation path, which
-  //    cannot sign — R10a-bis). Both are constant-time; the IP origin lock
-  //    (R10b) is the outer fence in front of both.
-  const hmacOk = verifySignature(rawBody, req.headers['x-hub-signature'], HMAC_SECRET);
-  const tokenOk =
-    !!AUTOMATION_SECRET &&
-    verifySharedSecret(req.headers[AUTOMATION_TOKEN_HEADER], AUTOMATION_SECRET);
-  if (!hmacOk && !tokenOk) {
+  // 1. Authenticate via the trigger adapter (HMAC over the raw body, or a
+  //    shared-secret bearer for callers that can't sign). Constant-time; the IP
+  //    origin lock (R10b) is the outer fence in front of both.
+  const authResult = trigger.authenticate(req.headers, rawBody, {
+    hmac: HMAC_SECRET,
+    sharedSecret: AUTOMATION_SECRET,
+  });
+  if (!authResult.ok) {
     log({ msg: 'reject', reason: 'unauthenticated' });
     res.writeHead(401).end('unauthorized');
     return;
   }
-  const authVia = hmacOk ? 'hmac' : 'shared-secret';
 
   // 2. Parse (after auth, so we never parse untrusted unsigned bodies)
   let payload;
@@ -168,39 +191,44 @@ async function handleWebhook(req, res, rawBody) {
     return;
   }
 
-  // 3. Dedupe (R8). System webhooks carry Jira's native identifier; the
-  //    Automation rule has no such header, so it sends its own stable id in
-  //    X-Triage-Delivery-Id (e.g. {{automationRule.id}}-{{issue.key}}-{{...}}).
-  const id =
-    req.headers['x-atlassian-webhook-identifier'] || req.headers['x-triage-delivery-id'];
+  // 3. Dedupe (R8) on the trigger-supplied delivery id.
+  const id = trigger.dedupeId(req.headers, payload);
   if (dedupe.seenBefore(id)) {
     log({ msg: 'drop', reason: 'duplicate', id });
     res.writeHead(200).end('ok');
     return;
   }
 
-  // 4. Gate: loop-guard → eligibility → authorization (gate.decide)
-  const verdict = decide(payload, state);
+  // 4. Gate via the trigger adapter: loop-guard → eligibility → authorization.
+  //    The agent definition supplies the authz allowlist + loop marker.
+  const verdict = trigger.decide(payload, agentDef, {
+    botActor: state.botActor,
+    loopMarker: state.loopMarker,
+    authorizedActors: AUTHORIZED,
+  });
   if (verdict.action === 'drop') {
     log({ msg: 'drop', reason: verdict.reason });
     res.writeHead(200).end('ok');
     return;
   }
 
+  const vars = verdict.vars || {};
+  const label = labelFor(vars);
+
   // 5. Spawn limiter (R10c) — drop with logged 200 when full
   const slot = limiter.tryAcquire();
   if (!slot.ok) {
-    log({ msg: 'drop', reason: `limiter:${slot.reason}`, key: verdict.key });
+    log({ msg: 'drop', reason: `limiter:${slot.reason}`, label });
     res.writeHead(200).end('ok');
     return;
   }
 
-  // 6. Ack fast, then spawn off the request path (KTD3). Pass the dedupe id so
-  // a spawn failure can evict it and let Jira's redelivery retry (otherwise the
-  // id is cached for 24h and the eligible ticket is silently never triaged).
-  log({ msg: 'spawn', key: verdict.key, authVia });
+  // 6. Ack fast, then spawn off the request path (KTD3). Pass the dedupe id so a
+  // spawn failure can evict it and let redelivery retry (otherwise the id is
+  // cached for 24h and the eligible event is silently never run).
+  log({ msg: 'spawn', label, authVia: authResult.via, trigger: TRIGGER_NAME, agent: agentDef.name });
   res.writeHead(200).end('ok');
-  spawnTriage(verdict.key, id);
+  spawnRun(vars, id, label);
 }
 
 function createServer() {
@@ -229,8 +257,12 @@ function createServer() {
   });
 }
 
-// Resolve the bot accountId via GET /myself before flipping ready (fail closed).
-async function resolveBotAccountId() {
+// Resolve the bot actor id for the loop guard before flipping ready (fail
+// closed). This is trigger-specific: the Jira trigger resolves it via GET
+// /myself; a trigger with no notion of a "bot actor" (e.g. generic) has nothing
+// to resolve and is ready immediately. Returns null when not applicable.
+async function resolveBotActor() {
+  if (TRIGGER_NAME !== 'jira') return null; // no bot-actor concept for this trigger
   const base = process.env.JIRA_BASE_URL;
   const email = process.env.JIRA_EMAIL;
   const token = process.env.JIRA_API_TOKEN;
@@ -248,18 +280,18 @@ async function resolveBotAccountId() {
   return me.accountId;
 }
 
-// Self-rescheduling probe (not setInterval) so at most one /myself call is in
-// flight — during a Jira outage an awaited setInterval callback would stack
-// overlapping requests.
+// Self-rescheduling probe (not setInterval) so at most one call is in flight —
+// during an outage an awaited setInterval callback would stack overlapping
+// requests.
 function scheduleReadinessProbe() {
   if (state.ready) return;
   const t = setTimeout(async () => {
     try {
-      state.botAccountId = await resolveBotAccountId();
+      state.botActor = await resolveBotActor();
       state.ready = true;
-      log({ msg: 'ready', botAccountId: state.botAccountId });
+      log({ msg: 'ready', botActor: state.botActor });
     } catch (e) {
-      log({ msg: 'startup_myself_retry_failed', error: e.message });
+      log({ msg: 'startup_bot_actor_retry_failed', error: e.message });
       scheduleReadinessProbe();
     }
   }, 15 * 1000);
@@ -289,20 +321,28 @@ function installShutdownHandler(server) {
 async function start() {
   const server = createServer();
   server.listen(PORT, () =>
-    log({ msg: 'listening', port: PORT, path: WEBHOOK_PATH, harness: HARNESS_NAME })
+    log({
+      msg: 'listening',
+      port: PORT,
+      path: WEBHOOK_PATH,
+      trigger: TRIGGER_NAME,
+      harness: HARNESS_NAME,
+      agent: agentDef.name,
+    })
   );
   setInterval(() => dedupe.sweep(), 60 * 60 * 1000).unref();
   installShutdownHandler(server);
 
-  // Block readiness until the loop guard has its bot accountId.
+  // Block readiness until the loop guard has its bot actor (when the trigger has
+  // one). A trigger with no bot-actor concept resolves null and is ready at once.
   try {
-    state.botAccountId = await resolveBotAccountId();
+    state.botActor = await resolveBotActor();
     state.ready = true;
-    log({ msg: 'ready', botAccountId: state.botAccountId });
+    log({ msg: 'ready', botActor: state.botActor });
   } catch (err) {
-    log({ msg: 'startup_myself_failed', error: err.message });
-    // Stay not-ready; retry in the background so a transient Jira outage
-    // recovers without a manual restart.
+    log({ msg: 'startup_bot_actor_failed', error: err.message });
+    // Stay not-ready; retry in the background so a transient outage recovers
+    // without a manual restart.
     scheduleReadinessProbe();
   }
   return server;
