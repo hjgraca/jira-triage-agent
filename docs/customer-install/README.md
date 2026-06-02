@@ -11,6 +11,9 @@ under `agent/` — it does **not** create a cluster, a VPC, or GitLab (that's th
 - A public HTTPS webhook endpoint — via **CloudFront** (no domain needed) or your
   own ALB + domain + TLS.
 - An **IRSA role** scoped to one Bedrock model (no static model credential).
+- A pluggable **coding-agent harness** — **pi** (Bedrock via IRSA) or
+  **kiro-cli** (its own backend), or bring your own. See
+  [Choose your harness](03b-choose-harness.md).
 - The **`triage` namespace**: ServiceAccount, NetworkPolicy, ConfigMap, Secret.
 
 The agent then triggers when someone adds the `triage` label to a Jira ticket.
@@ -34,6 +37,7 @@ Do these in sequence. Each page ends by pointing at the next.
 1. **[Prerequisites](01-prerequisites.md)** — what must exist before you start, and how to read your cluster's OIDC provider.
 2. **[Configure GitLab](02-configure-gitlab.md)** — read-only token, reachability from the cluster, CODEOWNERS for routing.
 3. **[Configure Jira](03-configure-jira.md)** — bot account + token, allowed-value sets, and the trigger. **Covers both Jira Cloud (Automation rule) and Data Center / Server (HMAC webhook).**
+3b. **[Choose your harness](03b-choose-harness.md)** — pick the coding-agent CLI the agent runs on (**pi** or **kiro-cli**, or bring your own). Optional — defaults to pi.
 4. **[Deploy the agent](04-deploy-agent.md)** — terraform (IRSA + CloudFront), build/push the image, fill in manifests, `kubectl apply`, lock the origin, run the pre-launch checklist.
 5. **[Operations](05-operations.md)** — verify, monitor, rotate credentials, tune cost, troubleshoot.
 6. **[Security](06-security.md)** — the trust model and what you must confirm in your environment.

@@ -21,7 +21,8 @@ what surrounds it differs.
 |---|---|---|
 | **Listener** | `agent/listener/` | Node HTTP server. Authenticates the inbound webhook, applies the gate (loop guard → eligibility → authz → dedupe → rate/budget), acks fast, and spawns one `pi` run per accepted event. Zero third-party deps. |
 | **Skill** | `agent/skills/jira-triage/` | The agent's brain: `SKILL.md` (the triage rubric + trust boundary) and bundled scripts `jira.sh` (allow-listed Jira writes) and `gitlab.sh` (bounded read-only source access). |
-| **Image** | `agent/docker/triage/Dockerfile` | `tini` → Node listener; bundles the `pi` CLI and the skill. The listener spawns `pi --mode json` per webhook. |
+| **Harness adapters** | `agent/listener/src/harness/` | Pluggable coding-agent CLIs. The listener spawns the one named by `HARNESS` (default `pi`; `kiro-cli` built in). Each adapter owns the argv + result-reading; the gate/limits/watchdog are harness-agnostic. Add your own with one file — see the [harness README](../../agent/listener/src/harness/README.md). |
+| **Image** | `agent/docker/triage/Dockerfile` | `tini` → Node listener; bakes in the selected harness(es) via build args + the skill. The listener spawns the harness per webhook. |
 | **Manifests** | `agent/k8s/` | Namespace + IRSA ServiceAccount, listener Deployment + dedicated LoadBalancer, NetworkPolicy (ingress + egress allowlist), and the ConfigMap/Secret. |
 | **Cloud deps** | `agent/terraform/` | Bedrock IRSA role (scoped to one model) and an optional CloudFront distribution for a domain-free HTTPS webhook endpoint. |
 
@@ -117,6 +118,13 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
 
 ## Design decisions worth knowing
 
+- **Pluggable harness, fixed skill.** The triage *rubric* and the
+  `jira.sh`/`gitlab.sh` *scripts* are harness-neutral, so swapping the coding
+  agent (pi ↔ kiro-cli ↔ your own) changes only *invocation* and *result-reading*
+  — encapsulated in a ~40-line adapter. Streaming harnesses parse events
+  (`interpret`); non-streaming ones classify from the exit code (`finalize`).
+  Harnesses without a skill-loader (kiro-cli) get the rubric inlined into the
+  prompt. This is what makes it plug-and-play for customers.
 - **Single replica, in-memory state.** Dedupe and the spend limiter are per-pod
   and in-memory, so the Deployment is pinned to `replicas: 1` with a `Recreate`
   strategy (two pods would each dedupe/limit independently). Scaling out requires

@@ -4,14 +4,21 @@ This directory is the **complete, self-contained unit** deployed into a
 Kubernetes cluster. Nothing under `workshop/` is required to run it.
 
 ```
-listener/                Node HTTP listener (zero deps): auth, gating, spawns pi runs
+listener/                Node HTTP listener (zero deps): auth, gating, spawns harness runs
   src/{server,gate,limits}.js
+  src/harness/           pluggable harness adapters (pi, kiro-cli, + your own) — see its README
   test/                  node:test suite (run: cd listener && node --test)
-skills/jira-triage/      pi.dev skill: SKILL.md rubric + jira.sh / gitlab.sh
-docker/triage/Dockerfile linux/amd64 image (listener + pi + skill); build context is THIS dir
+skills/jira-triage/      harness-neutral skill: SKILL.md rubric + jira.sh / gitlab.sh
+docker/triage/Dockerfile linux/amd64 image (listener + chosen harness + skill); context is THIS dir
 k8s/                     namespace/SA, listener Deployment+LB, NetworkPolicy, config/secret
 terraform/               standalone IRSA + optional CloudFront for an EXISTING cluster
 ```
+
+**Pluggable harness:** the listener spawns whichever coding-agent CLI `HARNESS`
+names (default `pi`; `kiro-cli` built in). Swapping it changes only one adapter
+file under `listener/src/harness/` — the gate, limits, and skill are unchanged.
+See [listener/src/harness/README.md](listener/src/harness/README.md) and
+[../docs/customer-install/03b-choose-harness.md](../docs/customer-install/03b-choose-harness.md).
 
 ## Install
 

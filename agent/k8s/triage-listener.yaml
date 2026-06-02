@@ -61,7 +61,14 @@ spec:
               value: "/jira-webhook"
             - name: SKILL_PATH
               value: "/skills/jira-triage"
-            - name: PI_MODEL
+            # Which headless harness to spawn per webhook: "pi" (default,
+            # Bedrock via IRSA) or "kiro-cli" (its own backend via KIRO_API_KEY).
+            # The image must have that harness baked in (Dockerfile build args).
+            - name: HARNESS
+              value: "pi"
+            # Model id passed to the harness. pi uses it directly; kiro-cli
+            # ignores it (model is set via its default/agent config).
+            - name: TRIAGE_MODEL
               value: "us.anthropic.claude-sonnet-4-6"
             - name: AWS_REGION
               value: "us-west-2"
@@ -93,6 +100,11 @@ spec:
             # disables that path; set it to enable Automation-rule triggering.
             - name: AUTOMATION_SHARED_SECRET
               valueFrom: { secretKeyRef: { name: triage-secrets, key: automation-shared-secret } }
+            # API key for the kiro-cli harness (HARNESS=kiro-cli). optional:true
+            # so pi deployments — which authenticate via IRSA — start fine
+            # without this key present in the secret.
+            - name: KIRO_API_KEY
+              valueFrom: { secretKeyRef: { name: triage-secrets, key: kiro-api-key, optional: true } }
           volumeMounts:
             # Allowed-value sets the skill reads (R2); fail-closed if absent.
             - name: triage-config
