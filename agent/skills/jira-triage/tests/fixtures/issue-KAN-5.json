@@ -1,0 +1,10 @@
+{
+  "key": "KAN-5",
+  "fields": {
+    "summary": "Login button does nothing on Safari",
+    "priority": { "name": "Medium" },
+    "labels": ["triage"],
+    "issuetype": { "name": "Task" },
+    "assignee": null
+  }
+}

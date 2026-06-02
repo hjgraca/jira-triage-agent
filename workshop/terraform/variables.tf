@@ -1,7 +1,7 @@
 variable "region" {
-  description = "AWS region to deploy into."
+  description = "AWS region to deploy into. us-west-2 so the cluster OIDC provider, the Bedrock IRSA role (triage agent), and the live ELB are all in one region — IRSA binds the cluster's region-specific OIDC issuer, so Bedrock and the cluster cannot be split across regions."
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 }
 
 variable "name" {
