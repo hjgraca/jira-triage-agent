@@ -16,3 +16,9 @@ kubeconfig
 
 # Real triage secrets (only the .example template is committed)
 k8s/triage-secrets.yaml
+
+# macOS junk
+.DS_Store
+
+# Local HLD working doc (author-managed, kept out of git)
+docs/hld/
