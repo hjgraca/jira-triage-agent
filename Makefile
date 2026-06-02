@@ -1,9 +1,14 @@
-## Agentic-dev workshop platform — EKS + GitLab
+## Agentic-dev WORKSHOP platform — EKS + GitLab + the triage agent.
+##
+## This Makefile builds the full LAB (workshop/terraform + GitLab + the agent),
+## used to develop and demo the agent end to end. To install ONLY the agent into
+## a customer's existing cluster, do NOT use this — follow docs/customer-install/
+## (which uses agent/terraform + agent/k8s against their own cluster).
 ##
 ## Usage:
-##   make cluster        # provision VPC + EKS via Terraform
+##   make cluster        # provision VPC + EKS via Terraform (workshop/terraform)
 ##   make kubeconfig     # point kubectl at the new cluster
-##   make apps           # deploy GitLab
+##   make apps           # deploy GitLab + the agent
 ##   make up             # cluster + kubeconfig + apps (full bring-up)
 ##   make triage-image   # build + push the triage agent image to ECR
 ##   make destroy        # tear everything down (runs orphan cleanup first)
@@ -11,7 +16,7 @@
 REGION         ?= us-west-2
 CLUSTER        ?= workshop
 DOMAIN         ?= workshop.example.com
-TF_DIR         := terraform
+TF_DIR         := workshop/terraform
 
 # Chart versions pinned for reproducibility.
 # GitLab chart 8.x/9.x still bundles the in-cluster Postgres/Redis/MinIO
@@ -41,13 +46,13 @@ gitlab:
 	helm upgrade --install gitlab gitlab/gitlab \
 		--version $(GITLAB_CHART_VERSION) \
 		--namespace gitlab --create-namespace \
-		--values helm/gitlab-values.yaml \
+		--values workshop/helm/gitlab-values.yaml \
 		--set global.hosts.domain=$(DOMAIN) \
 		--timeout 600s
 	# Git-over-SSH runs on its own IP-restricted LoadBalancer (SSH is disabled
-	# on the shared nginx LB; see helm/gitlab-values.yaml). Edit the source
-	# range in this manifest when your public IP changes.
-	kubectl apply -f k8s/gitlab-shell-ssh-lb.yaml
+	# on the shared nginx LB; see workshop/helm/gitlab-values.yaml). Edit the
+	# source range in this manifest when your public IP changes.
+	kubectl apply -f workshop/k8s/gitlab-shell-ssh-lb.yaml
 
 ## Build and push the triage agent image (listener + pi + jira-triage skill).
 ## Creates the ECR repo if absent, logs in, builds, and pushes.
@@ -58,27 +63,28 @@ triage-image:
 		| docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
 	# Pin linux/amd64 to match the EKS node arch (m5 = x86_64). Building native
 	# on an arm64 Mac otherwise yields an image the nodes can't exec.
-	docker buildx build --platform linux/amd64 -f docker/triage/Dockerfile -t $(TRIAGE_IMAGE) --push .
+	# Build context is agent/ — the Dockerfile COPYs listener/ + skills/ from there.
+	docker buildx build --platform linux/amd64 -f agent/docker/triage/Dockerfile -t $(TRIAGE_IMAGE) --push agent
 	@echo "Pushed $(TRIAGE_IMAGE) (linux/amd64)"
 
 ## Deploy the Jira triage agent. Applies namespace/SA, config, secrets,
 ## NetworkPolicy, and the listener (Deployment + dedicated LoadBalancer).
-## Prerequisites the operator must do first (see README "Triage agent"):
+## Prerequisites the operator must do first (see docs/customer-install/):
 ##   - `make triage-image` to build/push the image, then set <TRIAGE_IMAGE> in
-##     k8s/triage-listener.yaml
-##   - set the IRSA role ARN in k8s/triage-namespace.yaml
-##   - create k8s/triage-secrets.yaml and k8s/triage-config.yaml from templates
-##   - set AUTHORIZED_ACTORS + JIRA_BASE_URL in k8s/triage-listener.yaml
+##     agent/k8s/triage-listener.yaml
+##   - set the IRSA role ARN in agent/k8s/triage-namespace.yaml
+##   - create agent/k8s/triage-{secrets,config}.yaml from the .example templates
+##   - set AUTHORIZED_ACTORS + JIRA_BASE_URL in agent/k8s/triage-listener.yaml
 triage:
-	@if [ ! -f k8s/triage-secrets.yaml ] || [ ! -f k8s/triage-config.yaml ]; then \
-		echo "Skipping triage: create k8s/triage-secrets.yaml and k8s/triage-config.yaml"; \
-		echo "from the .example templates first (see README 'Triage agent'). Then: make triage"; \
+	@if [ ! -f agent/k8s/triage-secrets.yaml ] || [ ! -f agent/k8s/triage-config.yaml ]; then \
+		echo "Skipping triage: create agent/k8s/triage-secrets.yaml and agent/k8s/triage-config.yaml"; \
+		echo "from the .example templates first (see docs/customer-install/). Then: make triage"; \
 	else \
-		kubectl apply -f k8s/triage-namespace.yaml; \
-		kubectl apply -f k8s/triage-config.yaml; \
-		kubectl apply -f k8s/triage-secrets.yaml; \
-		kubectl apply -f k8s/triage-netpol.yaml; \
-		kubectl apply -f k8s/triage-listener.yaml; \
+		kubectl apply -f agent/k8s/triage-namespace.yaml; \
+		kubectl apply -f agent/k8s/triage-config.yaml; \
+		kubectl apply -f agent/k8s/triage-secrets.yaml; \
+		kubectl apply -f agent/k8s/triage-netpol.yaml; \
+		kubectl apply -f agent/k8s/triage-listener.yaml; \
 		echo "Triage listener applied. Get its LB hostname for CloudFront:"; \
 		echo "  kubectl get svc -n triage triage-listener -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"; \
 	fi
