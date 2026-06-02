@@ -45,12 +45,19 @@ terraform output -raw triage_bedrock_role_arn      # → into the SA annotation 
 ## Step 2 — Build and push the image
 
 The image is `linux/amd64` (match it to your node arch). Build context is
-`agent/`.
+`agent/`. Build args select which harness(es) to bake in — see
+[Choose your harness](03b-choose-harness.md).
 
 ```bash
 REPO=<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
 aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin "${REPO%/*}"
+
+# Default: pi only.
 docker buildx build --platform linux/amd64 -f agent/docker/triage/Dockerfile -t "$REPO:latest" --push agent
+
+# Or include kiro-cli (add --build-arg INSTALL_PI=false to drop pi):
+# docker buildx build --platform linux/amd64 --build-arg INSTALL_KIRO=true \
+#   -f agent/docker/triage/Dockerfile -t "$REPO:latest" --push agent
 ```
 
 (The workshop equivalent is `make triage-image`.)
@@ -83,7 +90,10 @@ for **your** trigger path (and may leave the other as a placeholder):
 - `JIRA_BASE_URL` → your Jira base URL
 - `GITLAB_BASE_URL` → reachable GitLab URL (see [Configure GitLab](02-configure-gitlab.md#2-make-gitlab-reachable-from-the-cluster))
 - `AUTHORIZED_ACTORS` → comma-separated accountIds allowed to trigger (R6b)
-- (optional) `PI_MODEL`, `MAX_CONCURRENT`, `SPAWN_CEILING`, `DAILY_BUDGET`
+- `HARNESS` → `pi` (default) or `kiro-cli` — must match what you baked into the
+  image (step 2) and the credential you set (step 3). See
+  [Choose your harness](03b-choose-harness.md).
+- (optional) `TRIAGE_MODEL`, `MAX_CONCURRENT`, `SPAWN_CEILING`, `DAILY_BUDGET`
 
 ## Step 4 — Apply
 

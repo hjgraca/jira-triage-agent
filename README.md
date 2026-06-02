@@ -6,8 +6,10 @@ coding harness, plus the EKS **workshop lab** used to develop and demo it.
 The agent watches for a `triage` label on a Jira ticket, reads the ticket and the
 relevant GitLab source, classifies it (category / state / severity), sets fields
 within an allow-listed set, posts an audit comment, and — for multi-repo
-features — proposes a work split across teams. It runs headless in Kubernetes and
-calls Amazon Bedrock via IRSA (no static model credential).
+features — proposes a work split across teams. It runs headless in Kubernetes on
+a **pluggable coding-agent harness** — [pi.dev](https://github.com/earendil-works/pi)
+(Bedrock via IRSA) or [kiro-cli](https://kiro.dev) (its own backend), or bring
+your own (see [harness adapters](agent/listener/src/harness/README.md)).
 
 ---
 

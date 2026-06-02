@@ -9,6 +9,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const { verifySignature, verifySharedSecret, decide, TRIAGE_MARKER } = require('./gate');
 const { DedupeCache, SpawnLimiter } = require('./limits');
+const { getAdapter } = require('./harness');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const WEBHOOK_PATH = process.env.WEBHOOK_PATH || '/jira-webhook';
@@ -17,12 +18,20 @@ const HMAC_SECRET = process.env.WEBHOOK_HMAC_SECRET || '';
 // HMAC). Empty → that path is disabled and only HMAC is accepted.
 const AUTOMATION_SECRET = process.env.AUTOMATION_SHARED_SECRET || '';
 const AUTOMATION_TOKEN_HEADER = 'x-triage-token';
-const PI_BIN = process.env.PI_BIN || 'pi';
-const PI_MODEL = process.env.PI_MODEL || 'us.anthropic.claude-sonnet-4-6';
+// Which coding-agent harness to spawn per webhook (pi, kiro-cli, …). The
+// adapter owns the argv + output handling; resolved once at load so a bad
+// HARNESS fails fast. See src/harness/README.md.
+const { name: HARNESS_NAME, adapter: harness } = getAdapter(process.env.HARNESS);
+const TRIAGE_MODEL =
+  process.env.TRIAGE_MODEL || process.env.PI_MODEL || 'us.anthropic.claude-sonnet-4-6';
 const SKILL_PATH = process.env.SKILL_PATH || '/skills/jira-triage';
 // Watchdog ceiling for a single triage run; a child exceeding it is killed so
-// it can't hold a limiter slot forever.
-const PI_TIMEOUT_MS = parseInt(process.env.PI_TIMEOUT_MS || '300000', 10);
+// it can't hold a limiter slot forever. TRIAGE_TIMEOUT_MS is harness-neutral;
+// PI_TIMEOUT_MS is kept as a back-compat alias.
+const TRIAGE_TIMEOUT_MS = parseInt(
+  process.env.TRIAGE_TIMEOUT_MS || process.env.PI_TIMEOUT_MS || '300000',
+  10
+);
 const AUTHORIZED = new Set(
   (process.env.AUTHORIZED_ACTORS || '').split(',').map((s) => s.trim()).filter(Boolean)
 );
@@ -70,14 +79,22 @@ function readRawBody(req, limitBytes = 256 * 1024) {
 const liveChildren = new Set();
 
 function spawnTriage(key, dedupeId) {
-  // Each run is one-shot: pi --mode json --skill <path> "<prompt>" then exit.
+  // One-shot run via the active harness adapter. The adapter owns the argv and
+  // (for streaming harnesses) the stdout parsing; this shell owns the lifecycle
+  // (limiter slot, watchdog, dedupe-evict on spawn failure) so those invariants
+  // hold no matter which harness is plugged in.
   const prompt = `Triage Jira issue ${key} using the jira-triage skill. Act on exactly this one ticket, then stop.`;
-  const child = spawn(
-    PI_BIN,
-    ['--mode', 'json', '--provider', 'amazon-bedrock', '--model', PI_MODEL, '--skill', SKILL_PATH, prompt],
-    { stdio: ['ignore', 'pipe', 'pipe'] }
-  );
+  const cmd = harness.buildCommand({ key, skillPath: SKILL_PATH, model: TRIAGE_MODEL, prompt });
+  const child = spawn(cmd.bin, cmd.args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Merge any adapter-declared env onto the inherited process env (IRSA vars,
+    // KIRO_API_KEY, etc. are already in process.env from the pod spec).
+    env: cmd.env ? { ...process.env, ...cmd.env } : process.env,
+  });
   liveChildren.add(child);
+
+  // Per-run accumulator the adapter mutates via interpret()/reads in finalize().
+  const runState = {};
 
   // Release the limiter slot EXACTLY once: a failed spawn emits both 'error'
   // and 'close', so guarding with a flag prevents a double-release that would
@@ -91,39 +108,37 @@ function spawnTriage(key, dedupeId) {
     limiter.release();
   };
 
-  // Watchdog: a hung run (Bedrock slow/unreachable, pi stuck) emits neither
+  // Watchdog: a hung run (model slow/unreachable, harness stuck) emits neither
   // 'close' nor 'error', so without this the slot leaks forever and enough
   // stuck runs silently wedge all triage. SIGTERM then SIGKILL after a grace.
   const watchdog = setTimeout(() => {
-    log({ msg: 'triage_timeout', key, timeoutMs: PI_TIMEOUT_MS });
+    log({ msg: 'triage_timeout', key, harness: HARNESS_NAME, timeoutMs: TRIAGE_TIMEOUT_MS });
     child.kill('SIGTERM');
     setTimeout(() => child.kill('SIGKILL'), 10_000).unref();
-  }, PI_TIMEOUT_MS);
+  }, TRIAGE_TIMEOUT_MS);
   watchdog.unref();
 
-  let lastErr = false;
-  child.stdout.on('data', (buf) => {
-    // Watch for terminal/error events; do NOT log full payloads.
-    for (const line of buf.toString().split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const ev = JSON.parse(line);
-        if (ev.type === 'tool_execution_end' && ev.isError) lastErr = true;
-        if (ev.type === 'agent_end') log({ msg: 'triage_done', key });
-      } catch {
-        /* partial line; ignore */
-      }
-    }
-  });
+  // Streaming harnesses parse stdout line-by-line; non-streaming ones omit
+  // interpret() and are classified from the exit code in finalize(). Never log
+  // full payloads (ticket bodies carry PII).
+  if (typeof harness.interpret === 'function') {
+    child.stdout.on('data', (buf) => {
+      for (const line of buf.toString().split('\n')) harness.interpret(line, runState);
+    });
+  }
   child.on('close', (code) => {
     releaseOnce();
-    log({ msg: 'triage_exit', key, code, toolError: lastErr });
+    // Streaming harnesses can report a clean terminal event (e.g. pi's
+    // agent_end); log it for parity with the pre-adapter behavior.
+    if (runState.agentEnded) log({ msg: 'triage_done', key, harness: HARNESS_NAME });
+    const { toolError } = harness.finalize(code, runState);
+    log({ msg: 'triage_exit', key, harness: HARNESS_NAME, code, toolError });
   });
   child.on('error', (err) => {
     releaseOnce();
     // The run never happened — let Jira's redelivery of this identifier retry.
     dedupe.evict(dedupeId);
-    log({ msg: 'triage_spawn_error', key, error: err.message });
+    log({ msg: 'triage_spawn_error', key, harness: HARNESS_NAME, error: err.message });
   });
 }
 
@@ -273,7 +288,9 @@ function installShutdownHandler(server) {
 
 async function start() {
   const server = createServer();
-  server.listen(PORT, () => log({ msg: 'listening', port: PORT, path: WEBHOOK_PATH }));
+  server.listen(PORT, () =>
+    log({ msg: 'listening', port: PORT, path: WEBHOOK_PATH, harness: HARNESS_NAME })
+  );
   setInterval(() => dedupe.sweep(), 60 * 60 * 1000).unref();
   installShutdownHandler(server);
 
