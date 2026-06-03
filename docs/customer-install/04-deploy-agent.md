@@ -76,12 +76,19 @@ cp agent/deploy/k8s/secrets.example.yaml agent/deploy/k8s/secrets.yaml   # fill 
 `agent/deploy/k8s/secrets.yaml` — set the credentials. You need the auth secret
 for **your** trigger path (and may leave the other as a placeholder):
 
+Keys are **UPPER_SNAKE_CASE** — the run Job loads the secret via `envFrom`, which
+maps each key verbatim to an env var, and the scripts/harnesses read standard env
+names. Dash-cased keys are silently dropped by the shell (the run would fail
+`JIRA_* is required`).
+
 | Key | Value |
 |---|---|
-| `jira-email` / `jira-api-token` | the bot account from [Configure Jira](03-configure-jira.md) |
-| `gitlab-read-token` | the read-only token from [Configure GitLab](02-configure-gitlab.md) |
-| `webhook-hmac-secret` | `openssl rand -hex 32` — **DC/Server** (system webhook) path |
-| `automation-shared-secret` | `openssl rand -hex 32` — **Cloud** (Automation rule) path |
+| `JIRA_EMAIL` / `JIRA_API_TOKEN` | the bot account from [Configure Jira](03-configure-jira.md) |
+| `GITLAB_READ_TOKEN` | the read-only token from [Configure GitLab](02-configure-gitlab.md) |
+| `WEBHOOK_HMAC_SECRET` | `openssl rand -hex 32` — **DC/Server** (system webhook) path |
+| `AUTOMATION_SHARED_SECRET` | `openssl rand -hex 32` — **Cloud** (Automation rule) path |
+| `KIRO_API_KEY` *(kiro-cli only)* | from the Kiro portal — pi/opencode ignore it |
+| `ANTHROPIC_API_KEY` *(opencode only)* | your provider key — pi/kiro ignore it |
 
 `agent/deploy/k8s/namespace.yaml` — set the **agent-runner** ServiceAccount
 annotation to the `triage_bedrock_role_arn` output from step 1 (the run Jobs use
@@ -92,9 +99,11 @@ it for Bedrock; the receiver needs no cloud creds).
 - `image:` and the `AGENT_IMAGE` env → your `$REPO:latest` (the receiver stamps
   this into the Jobs it creates — normally its own image).
 - `AUTHORIZED_ACTORS` → comma-separated accountIds allowed to trigger (R6b).
-- `RUN_ENV` → non-secret env for each run Job, e.g. `HARNESS=pi` (and
-  `GITLAB_BASE_URL=...`, `TRIAGE_MODEL=...`). Must match the harness baked into
-  the image — see [Choose your harness](03b-choose-harness.md).
+- `RUN_ENV` → non-secret env for each run Job: `HARNESS=<adapter>`, `MODEL`/
+  `OPENCODE_MODEL`, `GITLAB_BASE_URL`, etc. The exact `RUN_ENV` differs per
+  harness — copy the row for yours from
+  [Choose your harness → Receiver `RUN_ENV` per harness](03b-choose-harness.md#receiver-run_env-per-harness-the-one-thing-you-set).
+  It must match the harness baked into the image.
 - `RUN_SECRET` / `RUN_CONFIGMAP` already point at `agent-secrets` / `agent-config`
   — the run Job loads creds itself via `envFrom`, so the receiver never sees them.
 
@@ -119,9 +128,37 @@ warm-up). `make agent-deploy` runs this whole sequence.
 
 ## Step 5 — Expose the receiver (CloudFront or your own ALB)
 
-`receiver.yaml` creates the `agent-receiver` Service as a **LoadBalancer locked
-to CloudFront's origin CIDRs** (R10b) — so it's reachable only through CloudFront,
-which `agent/deploy/terraform` provisions as its origin:
+`receiver.yaml` creates the `agent-receiver` Service as an **NLB managed by the
+AWS Load Balancer Controller, locked to CloudFront's origin via a managed prefix
+list** (R10b) — reachable only through CloudFront, which `agent/deploy/terraform`
+provisions as its origin.
+
+> **Why an NLB + prefix list, not a classic ELB + CIDR ranges?** CloudFront's
+> origin range is ~45 CIDRs. The in-tree classic-ELB provider turns
+> `loadBalancerSourceRanges` into **one security-group rule per CIDR** — ~45
+> rules, which overflows the **60-rules-per-SG limit**, so the LB silently never
+> provisions (`RulesPerSecurityGroupLimitExceeded`). The LBC can instead
+> reference the whole CloudFront prefix list as a **single** SG rule. That's why
+> the Service uses `loadBalancerClass: service.k8s.aws/nlb` and the
+> `aws-load-balancer-security-group-prefix-lists` annotation.
+
+**Prerequisite — the AWS Load Balancer Controller** must be installed in the
+cluster (it owns the `service.k8s.aws/nlb` class). Most production EKS clusters
+already run it: `kubectl -n kube-system get deploy aws-load-balancer-controller`.
+If absent, install it (Helm chart `eks-charts/aws-load-balancer-controller` with
+an IRSA role carrying the LBC policy) before applying `receiver.yaml`.
+
+Set the prefix-list id for **your** region in the Service annotation
+(`receiver.yaml`) — it defaults to the `us-west-2` id:
+
+```bash
+cd agent/deploy/terraform
+terraform output -raw cloudfront_origin_prefix_list_id   # → pl-xxxxxxxx for your region
+# put it in receiver.yaml:
+#   service.beta.kubernetes.io/aws-load-balancer-security-group-prefix-lists: "pl-xxxxxxxx"
+```
+
+Then wire CloudFront to the NLB hostname:
 
 ```bash
 LB=$(kubectl -n agents get svc agent-receiver \
@@ -129,15 +166,16 @@ LB=$(kubectl -n agents get svc agent-receiver \
 cd agent/deploy/terraform
 terraform apply -var "listener_lb_dns=$LB"
 terraform output -raw triage_webhook_url          # → the /jira-webhook URL for Jira
-terraform output -json cloudfront_origin_cidrs    # → keep loadBalancerSourceRanges current
 ```
 
-Prefer your **own ALB + domain + TLS**? Change the Service to `ClusterIP`, point
-the ALB at it, and lock the origin with the ALB security group / WAF instead. The
-webhook URL you register in Jira is then `https://<your-domain>/webhook`.
+Prefer your **own ALB + domain + TLS**? Change the Service to `ClusterIP`, drop
+the NLB annotations, point the ALB at it, and lock the origin with the ALB
+security group / WAF instead. The webhook URL you register in Jira is then
+`https://<your-domain>/webhook`.
 
 > **Verify the lock:** a direct request to the LB hostname (bypassing CloudFront)
-> must be refused.
+> must be refused (it will hang/time out — only the CloudFront prefix list is
+> allowed inbound).
 
 ## Step 6 — Register the trigger in Jira
 

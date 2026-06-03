@@ -136,19 +136,22 @@ cluster and the Bedrock role. Follow:
    # set the agent-runner IRSA ARN (namespace.yaml), secrets, config,
    # AGENT_IMAGE + AUTHORIZED_ACTORS (receiver.yaml) — see the deploy guide
    make agent-deploy            # apply agent/deploy/k8s manifests
-   # then wire CloudFront in front of the receiver's LoadBalancer:
+   # then wire CloudFront in front of the receiver's NLB:
    LB=$(kubectl get svc -n agents agent-receiver \
      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
    terraform -chdir=workshop/terraform apply -var "triage_listener_lb_dns=$LB"
-   terraform -chdir=workshop/terraform output -raw triage_webhook_url        # → register in Jira
-   terraform -chdir=workshop/terraform output -json cloudfront_origin_cidrs  # → loadBalancerSourceRanges
+   terraform -chdir=workshop/terraform output -raw triage_webhook_url               # → register in Jira
+   terraform -chdir=workshop/terraform output -raw cloudfront_origin_prefix_list_id # → receiver.yaml SG-prefix-lists annotation
    ```
 
-The Bedrock IRSA role and CloudFront here come from **`workshop/terraform`**
-(not `agent/deploy/terraform`), because the lab manages cluster and cloud deps in
-one state. The CloudFront distribution fronts the `agent-receiver` LoadBalancer
-(its `loadBalancerSourceRanges` are already the CloudFront origin CIDRs).
-Everything else (manifests, image, skill) is identical to the customer path.
+The Bedrock IRSA role, the **AWS Load Balancer Controller**, and CloudFront here
+all come from **`workshop/terraform`** (not `agent/deploy/terraform`), because the
+lab manages cluster and cloud deps in one state. The `agent-receiver` Service is
+an **LBC-managed NLB** locked to CloudFront via the origin-facing managed prefix
+list (one SG rule — a classic ELB with ~45 CIDR source ranges overflows the
+60-rules-per-SG limit and never provisions). The CloudFront distribution fronts
+that NLB. Everything else (manifests, image, skill) is identical to the customer
+path.
 
 ## Security
 

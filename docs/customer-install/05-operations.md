@@ -70,7 +70,7 @@ not in-process:
 
 | Bound | Where | Caps |
 |---|---|---|
-| `count/pods` | `resourcequota.yaml` | concurrent runs (storm/loop defense) |
+| `pods` | `resourcequota.yaml` | concurrent runs (storm/loop defense). Counts non-terminal pods only, so finished runs free their slot immediately; the cap is `receiver replicas + max concurrent runs` (it's namespace-wide). |
 | `activeDeadlineSeconds` | the Job spec (`lib/job.js`) | wall-clock per run |
 | `backoffLimit` | the Job spec | retries on failure |
 | **AWS Budgets / Bedrock quota** | provider-side | cumulative dollar spend (the daily backstop) |
@@ -89,11 +89,11 @@ pod, so there's no single-writer constraint.
 | Symptom | Likely cause | Check |
 |---|---|---|
 | Adding label does nothing; **no** receiver log | Trigger didn't send | Cloud: Automation rule audit log; DC: webhook delivery history. Confirm condition `Labels contains triage` + the URL. |
-| `reject reason:"unauthenticated"` | Wrong/missing auth | Cloud: `X-Triage-Token` matches `automation-shared-secret`. DC: HMAC secret matches; `sha256=` prefix. |
-| `error reason:"job-create-failed"` | RBAC or quota | `rbac.yaml` applied + receiver uses `agent-receiver` SA; or `count/pods` quota is full. |
+| `reject reason:"unauthenticated"` | Wrong/missing auth | Cloud: `X-Triage-Token` matches `AUTOMATION_SHARED_SECRET`. DC: HMAC secret matches; `sha256=` prefix. |
+| `error reason:"job-create-failed"` | RBAC or quota | `rbac.yaml` applied + receiver uses `agent-receiver` SA; or the `pods` quota is full. |
 | `drop reason:"unauthorized label actor"` | Initiator not allowlisted | Add their accountId to `AUTHORIZED_ACTORS`, re-apply, roll the receiver. |
 | `drop reason:"ineligible event"` | DC update without a label-add in the changelog | Expected — only label-adds (and creates) are eligible. |
-| Job created but pod **Pending** | ResourceQuota full | Runs are queued; raise `count/pods` or wait. |
+| Job created but pod **Pending** | ResourceQuota full | Runs are queued; raise `pods` (remember it includes the receiver replicas) or wait. |
 | Run Job **Failed** | harness non-zero exit | `kubectl -n agents logs job/<name>`; common causes are bad creds or an out-of-set write. |
 | Agent comments but **doesn't assign** | No mapped owner / empty `assignees` | Expected when no CODEOWNERS owner maps to an allowed assignee — it recommends instead. |
 | `exec format error` | Wrong image arch | Rebuild `--platform linux/amd64`. |

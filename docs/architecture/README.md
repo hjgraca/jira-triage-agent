@@ -96,6 +96,7 @@ flowchart LR
   end
   subgraph AWS["Customer AWS account"]
     CF[CloudFront\nor customer ALB+TLS]
+    NLB[NLB\nSG locked to CloudFront\norigin prefix list]
     subgraph EKS["Existing EKS cluster — namespace: agents"]
       RC[Receiver Deployment\nstateless, N replicas]
       RC -. create Job .-> J1[Run Job\nagent image: run.js + pi]
@@ -106,7 +107,7 @@ flowchart LR
     G[REST v4\nread-only]
   end
 
-  R -->|POST + auth header| CF --> RC
+  R -->|POST + auth header| CF --> NLB --> RC
   J1 -->|IRSA, no static cred| BR
   J1 -->|read-only routing + code| G
   J1 -->|comment / set fields / remove label| Jira
@@ -158,6 +159,7 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
 | # | Guard | What it stops | Where |
 |---|---|---|---|
 | Auth | HMAC (`X-Hub-Signature`) **or** constant-time shared secret (`X-Triage-Token`) | Forged/unauthenticated webhooks. | receiver |
+| R10b | Origin lock — NLB SG allows inbound only from CloudFront's managed prefix list (one rule) | Reaching the receiver directly, bypassing CloudFront/auth. | LB SG |
 | R7 | Loop guard — **stateless** disclaimer/loop marker (no bot-account lookup) | The agent triggering itself on its own comment. | trigger |
 | R6b | Actor allowlist (`AUTHORIZED_ACTORS`) on label-add | Anyone who can edit labels spawning runs. | trigger |
 | R8 | Dedupe = deterministic **Job name** (409 = duplicate) | Replays and retries double-triaging. | K8s |
@@ -199,3 +201,9 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
 - **No domain required.** CloudFront's default `*.cloudfront.net` cert fronts the
   receiver Service with valid TLS and no domain purchase; customers with their
   own domain + ALB can skip it.
+- **NLB + prefix-list origin lock.** The receiver sits behind an LBC-managed NLB
+  so its security group can reference CloudFront's origin-facing managed prefix
+  list as a *single* rule. A classic ELB would fan ~45 CloudFront CIDRs into ~45
+  SG rules and hit the 60-rules-per-SG limit (`RulesPerSecurityGroupLimitExceeded`
+  → the LB never provisions). This is why the cluster needs the AWS Load Balancer
+  Controller for the default ingress path.

@@ -105,3 +105,19 @@ output "cloudfront_origin_cidrs" {
   description = "CloudFront origin-facing CIDRs to set as the listener Service's loadBalancerSourceRanges (R10b), so the public LB only accepts CloudFront."
   value       = local.triage_cf_enabled ? data.aws_ec2_managed_prefix_list.cloudfront_origin_facing[0].entries[*].cidr : []
 }
+
+# Preferred origin lock for the NLB path: reference this prefix list as a SINGLE
+# SG rule via the receiver Service annotation
+#   service.beta.kubernetes.io/aws-load-balancer-security-group-prefix-lists
+# instead of expanding ~45 CIDRs into ~45 rules (which overflows the 60-rules-
+# per-SG limit and is why the classic ELB never provisioned). Always available
+# (not gated on triage_cf_enabled) because the manifest needs it before the
+# first LB exists.
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing_id" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+output "cloudfront_origin_prefix_list_id" {
+  description = "CloudFront origin-facing managed prefix-list id for this region. Set it in the receiver Service's aws-load-balancer-security-group-prefix-lists annotation to lock the NLB to CloudFront with one SG rule (R10b)."
+  value       = data.aws_ec2_managed_prefix_list.cloudfront_origin_facing_id.id
+}

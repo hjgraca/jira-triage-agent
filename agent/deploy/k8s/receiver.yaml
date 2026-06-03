@@ -6,7 +6,17 @@
 # It runs the SAME agent image as the Jobs it creates (command → receiver.js),
 # so the gate reads the exact SKILL.md the run will use.
 #
-# Set 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91 to your built agent image (Makefile: make agent-image …).
+# Set the image below to your built agent image (Makefile: make agent-image …),
+# and RUN_ENV's HARNESS to the matching adapter. Currently the opencode build.
+#
+# HARNESS / RUN_ENV per harness (see docs/customer-install/03b-choose-harness.md):
+#   pi             RUN_ENV: HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…
+#                  cred: none (agent-runner IRSA → Bedrock)
+#   kiro-cli       RUN_ENV: HARNESS=kiro-cli,GITLAB_BASE_URL=…   (no MODEL; Kiro account picks it)
+#                  cred: KIRO_API_KEY in agent-secrets
+#   opencode       RUN_ENV: HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=…
+#                  cred: none (agent-runner IRSA → Bedrock) — or a provider key (e.g. ANTHROPIC_API_KEY) + OPENCODE_MODEL=anthropic/…
+# NOTE: HARNESS is the ADAPTER name (kiro-cli), not the build arg (kiro).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +40,7 @@ spec:
         runAsUser: 10001
       containers:
         - name: receiver
-          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91
+          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-opencode-54beb8e
           command: ["node", "runtime/receiver.js"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -40,9 +50,12 @@ spec:
             - { name: WEBHOOK_PATH, value: "/jira-webhook" }
             - { name: TRIGGER, value: "jira" }
             # The image to stamp into run Jobs — normally this same image.
-            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91" }
-            # Non-secret env passed to each run Job (harness + model).
-            - { name: RUN_ENV, value: "HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
+            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-opencode-54beb8e" }
+            # Non-secret env passed to each run Job. opencode talks to Bedrock via
+            # the SAME IRSA role as pi (agent-runner SA → AWS_WEB_IDENTITY_TOKEN_FILE),
+            # so no key — but its model id needs the provider prefix
+            # (amazon-bedrock/<inference-profile>) and AWS_REGION must be set.
+            - { name: RUN_ENV, value: "HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
             # Run Jobs load creds themselves from these (envFrom) — the receiver
             # never sees secret values.
             - { name: RUN_SECRET, value: "agent-secrets" }
@@ -51,9 +64,9 @@ spec:
             - { name: NODE_EXTRA_CA_CERTS, value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" }
             # Webhook auth secrets (the receiver only needs these to verify).
             - name: WEBHOOK_HMAC_SECRET
-              valueFrom: { secretKeyRef: { name: agent-secrets, key: webhook-hmac-secret, optional: true } }
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: WEBHOOK_HMAC_SECRET, optional: true } }
             - name: SHARED_SECRET
-              valueFrom: { secretKeyRef: { name: agent-secrets, key: automation-shared-secret, optional: true } }
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: AUTOMATION_SHARED_SECRET, optional: true } }
             # Who may trigger via the label (R6b); ∪ the agent def's own list.
             - name: AUTHORIZED_ACTORS
               value: "557058:2ead7aac-3eea-430f-9f79-4967084b8264"
@@ -67,14 +80,22 @@ spec:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { memory: 128Mi }
 ---
-# Public LoadBalancer fronting the receiver, locked to CloudFront's origin CIDRs
-# (R10b) so only CloudFront can reach it. CloudFront (agent/deploy/terraform, or
-# workshop/terraform in the lab) is its origin; the webhook URL Jira calls is the
-# CloudFront URL. If you front the receiver with your own ALB+TLS instead, change
-# this to ClusterIP and point the ALB at it.
+# Public NLB fronting the receiver, managed by the AWS Load Balancer Controller
+# and locked to CloudFront so only CloudFront can reach it (R10b). CloudFront
+# (agent/deploy/terraform, or workshop/terraform in the lab) is its origin; the
+# webhook URL Jira calls is the CloudFront URL.
 #
-# Refresh loadBalancerSourceRanges if AWS updates the prefix list: re-run
-# `terraform output -json cloudfront_origin_cidrs` and re-apply.
+# WHY NLB + a PREFIX LIST instead of a classic ELB + loadBalancerSourceRanges:
+# the in-tree classic-ELB provider expands source ranges into ONE SG rule per
+# CIDR. CloudFront's origin range is ~45 CIDRs → ~45 rules, which overflows the
+# 60-rules-per-SG limit, so the LB never provisions (RulesPerSecurityGroup-
+# LimitExceeded). The LBC can reference the CloudFront managed prefix list as a
+# SINGLE rule (`...-security-group-prefix-lists`), which fits. The LBC also needs
+# client-IP preservation for the source restriction to apply — `instance` target
+# type provides it by default.
+#
+# Front with your own ALB+TLS instead? Change type to ClusterIP, drop these
+# annotations, point the ALB at it, and lock the origin with the ALB's SG/WAF.
 apiVersion: v1
 kind: Service
 metadata:
@@ -83,55 +104,19 @@ metadata:
   labels:
     app.kubernetes.io/name: agent-receiver
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "classic"
+    # LBC-managed NLB, internet-facing, NodePort/instance routing (preserves
+    # client IP → the prefix-list source lock below is honored).
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "instance"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    # Origin lock (R10b): allow inbound ONLY from CloudFront's origin-facing
+    # managed prefix list, as a single SG rule. This value is the us-west-2 id;
+    # set YOURS from `terraform output -raw cloudfront_origin_prefix_list_id`.
+    service.beta.kubernetes.io/aws-load-balancer-security-group-prefix-lists: "pl-82a045eb"
+    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 spec:
   type: LoadBalancer
-  loadBalancerSourceRanges:
-    - 13.124.199.0/24
-    - 130.176.0.0/18
-    - 130.176.128.0/21
-    - 130.176.136.0/23
-    - 130.176.140.0/22
-    - 130.176.144.0/20
-    - 130.176.160.0/19
-    - 130.176.192.0/19
-    - 130.176.64.0/21
-    - 130.176.72.0/22
-    - 130.176.76.0/24
-    - 130.176.78.0/23
-    - 130.176.80.0/22
-    - 130.176.86.0/23
-    - 130.176.88.0/21
-    - 130.176.96.0/19
-    - 15.158.0.0/16
-    - 18.68.0.0/16
-    - 204.246.166.0/24
-    - 205.251.218.0/24
-    - 3.172.0.0/18
-    - 3.172.64.0/18
-    - 3.29.57.0/26
-    - 52.46.0.0/18
-    - 52.82.128.0/23
-    - 52.82.134.0/23
-    - 54.182.128.0/20
-    - 54.182.144.0/21
-    - 54.182.154.0/23
-    - 54.182.156.0/22
-    - 54.182.160.0/21
-    - 54.182.172.0/22
-    - 54.182.176.0/21
-    - 54.182.184.0/22
-    - 54.182.188.0/23
-    - 54.182.224.0/21
-    - 54.182.240.0/21
-    - 54.182.248.0/22
-    - 54.239.134.0/23
-    - 54.239.170.0/23
-    - 54.239.204.0/22
-    - 54.239.208.0/21
-    - 64.252.128.0/18
-    - 64.252.64.0/18
-    - 70.132.0.0/18
+  loadBalancerClass: service.k8s.aws/nlb # bind to the LBC, not the in-tree provider
   selector:
     app.kubernetes.io/name: agent-receiver
   ports:

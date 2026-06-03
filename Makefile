@@ -37,7 +37,7 @@ AGENT_IMAGE = $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(AGENT_ECR_REPO):$(
 AGENT_BASE_TAG    := agent-base:local
 AGENT_HARNESS_TAG := agent-$(HARNESS):local
 
-.PHONY: cluster kubeconfig apps up gitlab agent-deploy agent-image destroy clean-k8s-lb
+.PHONY: cluster kubeconfig apps up gitlab agent-deploy agent-image agent-e2e agent-e2e-step destroy clean-k8s-lb
 
 cluster:
 	cd $(TF_DIR) && terraform init && terraform apply \
@@ -105,6 +105,16 @@ agent-deploy:
 		echo "Receiver applied. Front it with CloudFront/ALB for the webhook URL:"; \
 		echo "  kubectl get svc -n agents agent-receiver"; \
 	fi
+
+## Live end-to-end test of the deployed agent: drives the real CloudFront → NLB →
+## receiver → Job → run chain and asserts each link (see agent/deploy/test/).
+##   make agent-e2e          # full run
+##   make agent-e2e-step     # step-by-step, explains + pauses at each stage
+agent-e2e:
+	TF_DIR=$(TF_DIR) agent/deploy/test/e2e.sh
+
+agent-e2e-step:
+	TF_DIR=$(TF_DIR) agent/deploy/test/e2e.sh --step
 
 up: cluster kubeconfig apps
 
