@@ -65,6 +65,9 @@ function buildJob(opts) {
             {
               name: 'run',
               image,
+              // The image's default CMD is the receiver; a run Job is the OTHER
+              // entrypoint, so override the command explicitly.
+              command: ['node', 'runtime/run.js'],
               // RUN_VARS carries the trigger's parsed vars to run.js.
               env: [{ name: 'RUN_VARS', value: JSON.stringify(vars || {}) }, ...env],
               ...(envFrom.length ? { envFrom } : {}),

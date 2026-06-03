@@ -31,6 +31,8 @@ test('buildJob produces a one-shot Job with RUN_VARS + K8s-owned guards', () => 
   assert.ok(spec.ttlSecondsAfterFinished > 0); // cleanup
   const c = spec.template.spec.containers[0];
   assert.strictEqual(c.image, 'repo/agent:jira-triage-pi');
+  // Must override the image's default CMD (receiver) → the run entrypoint.
+  assert.deepStrictEqual(c.command, ['node', 'runtime/run.js']);
   assert.strictEqual(spec.template.spec.restartPolicy, 'Never');
   // RUN_VARS carries the trigger vars; extra env is appended.
   const runVars = c.env.find((e) => e.name === 'RUN_VARS');

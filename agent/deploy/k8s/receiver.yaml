@@ -6,7 +6,7 @@
 # It runs the SAME agent image as the Jobs it creates (command → receiver.js),
 # so the gate reads the exact SKILL.md the run will use.
 #
-# Set <AGENT_IMAGE> to your built agent image (Makefile: make agent-image …).
+# Set 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi to your built agent image (Makefile: make agent-image …).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +30,7 @@ spec:
         runAsUser: 10001
       containers:
         - name: receiver
-          image: <AGENT_IMAGE>
+          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi
           command: ["node", "runtime/receiver.js"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -40,9 +40,9 @@ spec:
             - { name: WEBHOOK_PATH, value: "/jira-webhook" }
             - { name: TRIGGER, value: "jira" }
             # The image to stamp into run Jobs — normally this same image.
-            - { name: AGENT_IMAGE, value: "<AGENT_IMAGE>" }
+            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi" }
             # Non-secret env passed to each run Job (harness + model).
-            - { name: RUN_ENV, value: "HARNESS=pi" }
+            - { name: RUN_ENV, value: "HARNESS=pi,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
             # Run Jobs load creds themselves from these (envFrom) — the receiver
             # never sees secret values.
             - { name: RUN_SECRET, value: "agent-secrets" }
@@ -56,7 +56,7 @@ spec:
               valueFrom: { secretKeyRef: { name: agent-secrets, key: automation-shared-secret, optional: true } }
             # Who may trigger via the label (R6b); ∪ the agent def's own list.
             - name: AUTHORIZED_ACTORS
-              value: "<COMMA_SEPARATED_ACCOUNT_IDS>"
+              value: "557058:2ead7aac-3eea-430f-9f79-4967084b8264"
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 10
