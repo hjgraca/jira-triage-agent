@@ -31,7 +31,7 @@ spec:
         runAsUser: 10001
       containers:
         - name: receiver
-          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-kiro-f7b4f4c-fix1
+          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-opencode-54beb8e
           command: ["node", "runtime/receiver.js"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -41,11 +41,12 @@ spec:
             - { name: WEBHOOK_PATH, value: "/jira-webhook" }
             - { name: TRIGGER, value: "jira" }
             # The image to stamp into run Jobs — normally this same image.
-            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-kiro-f7b4f4c-fix1" }
-            # Non-secret env passed to each run Job. HARNESS is the ADAPTER name
-            # (kiro-cli), not the build arg (kiro). kiro ignores MODEL — its model
-            # comes from the Kiro account/agent config — so it's omitted here.
-            - { name: RUN_ENV, value: "HARNESS=kiro-cli,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
+            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-opencode-54beb8e" }
+            # Non-secret env passed to each run Job. opencode talks to Bedrock via
+            # the SAME IRSA role as pi (agent-runner SA → AWS_WEB_IDENTITY_TOKEN_FILE),
+            # so no key — but its model id needs the provider prefix
+            # (amazon-bedrock/<inference-profile>) and AWS_REGION must be set.
+            - { name: RUN_ENV, value: "HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
             # Run Jobs load creds themselves from these (envFrom) — the receiver
             # never sees secret values.
             - { name: RUN_SECRET, value: "agent-secrets" }

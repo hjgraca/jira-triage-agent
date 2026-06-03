@@ -15,8 +15,8 @@ is a small adapter file.
 |---|---|---|---|
 | Project | [pi.dev](https://github.com/earendil-works/pi) | [kiro.dev](https://kiro.dev) | [opencode.ai](https://opencode.ai) |
 | Invocation | `pi --mode json` | `kiro-cli chat --no-interactive` | `opencode run --format json` |
-| Model backend | **Amazon Bedrock** via IRSA (no key in pod) | Kiro's own backend (**`KIRO_API_KEY`**) | any provider (provider key / `auth.json`) |
-| Subscription | AWS Bedrock model access | Kiro **Pro / Pro+ / Power** | provider account (e.g. Anthropic) |
+| Model backend | **Amazon Bedrock** via IRSA (no key in pod) | Kiro's own backend (**`KIRO_API_KEY`**) | **Bedrock via IRSA** (no key) **or** any provider key |
+| Subscription | AWS Bedrock model access | Kiro **Pro / Pro+ / Power** | AWS Bedrock access, or a provider account (e.g. Anthropic) |
 | Skill loading | native `--skill <path>` | rubric **inlined** | rubric **inlined** |
 | Output | streaming JSON | final response; result from **exit code** | streaming JSON + exit code |
 | Model selection | `TRIAGE_MODEL` | Kiro default-model/agent config (`TRIAGE_MODEL` ignored) | `OPENCODE_MODEL` or `TRIAGE_MODEL` if `provider/model`-shaped |
@@ -92,21 +92,33 @@ raw three-step build is shown per harness below.
    docker build -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=agent-base:local -t agent-opencode:local agent
    docker build -f agent/agents/jira-triage/Dockerfile     --build-arg BASE=agent-opencode:local -t "$REPO:latest" agent
    ```
-2. **Add the provider key** to `agent/deploy/k8s/secrets.yaml`, named for the
-   env var your provider expects (opencode reads it directly from env):
+2. **Pick an auth path.** opencode supports **Amazon Bedrock via IRSA** (no key —
+   reuses the same role pi uses) *or* a provider API key.
+
+   **Option A — Bedrock via IRSA (recommended; no key):** opencode's
+   `amazon-bedrock` provider uses the AWS credential chain, including the
+   `AWS_WEB_IDENTITY_TOKEN_FILE`/`AWS_ROLE_ARN` that EKS injects from the
+   `agent-runner` ServiceAccount's IRSA annotation — the **same** Bedrock role as
+   pi. Nothing to add to the secret. In `RUN_ENV` set:
+   ```
+   HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2
+   ```
+   The model id needs the `amazon-bedrock/` provider prefix and the `us.`
+   cross-region inference profile your IRSA policy is scoped to; `AWS_REGION`
+   must be set or the SDK can't resolve the endpoint. (`opencode models | grep
+   bedrock` lists the available ids.)
+
+   **Option B — provider API key:** add it to `agent/deploy/k8s/secrets.yaml`,
+   named for the env var your provider expects (opencode reads it directly from
+   env via `envFrom`):
    ```yaml
    ANTHROPIC_API_KEY: "<your provider API key>"   # e.g. an Anthropic key
    ```
-   The run Job loads the whole secret via `envFrom`, so this reaches opencode as
-   `$ANTHROPIC_API_KEY`. For a different provider, name the key for that
-   provider's env var (run `opencode models` to see provider/model ids).
-3. **Set the harness + model:** `HARNESS: "opencode"`, and set the model in
-   `provider/model` form via `OPENCODE_MODEL` (or `TRIAGE_MODEL` if it already
-   has a provider prefix). A bare model id is ignored — opencode requires the
-   provider prefix.
-4. Apply secret + receiver and roll the deployment.
+   Then set `HARNESS=opencode,OPENCODE_MODEL=anthropic/claude-sonnet-4-6`.
+3. Apply secret (if any) + receiver and roll the deployment.
 
 > **Model on opencode:** `opencode run` needs `--model provider/model` (e.g.
+> `amazon-bedrock/us.anthropic.claude-sonnet-4-6` or
 > `anthropic/claude-sonnet-4-6`). The adapter passes it only when the configured
 > model contains a `/`; otherwise it falls through to opencode's configured
 > default. We use `opencode run`, not `opencode serve` — see the table note above.
