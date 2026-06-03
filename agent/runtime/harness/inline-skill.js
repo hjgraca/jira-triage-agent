@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { splitFrontmatter } = require('../listener/agent-def');
+const { splitFrontmatter } = require('../lib/agent-def');
 
 // Cache the rubric BODY per skillPath so we read it once, not per webhook. The
 // body is SKILL.md with its YAML frontmatter stripped — the frontmatter is the
@@ -32,19 +32,28 @@ function loadRubric(skillPath) {
 }
 
 /**
- * Build a self-contained prompt for a skill-less harness: the rubric text, the
- * scripts to use for all Jira/GitLab access, and the base triage prompt naming
- * the one issue to act on.
+ * Build a self-contained prompt for a skill-less harness: the rubric text, a
+ * pointer to whatever scripts the skill bundles (agent-agnostic — discovered,
+ * not hardcoded), and the base prompt naming the work to do.
  */
 function composeInlineSkillPrompt(skillPath, basePrompt) {
   const rubric = loadRubric(skillPath);
-  const scripts = path.join(skillPath, 'scripts');
+  const scriptsDir = path.join(skillPath, 'scripts');
+  let scriptLine = '';
+  try {
+    const scripts = fs.readdirSync(scriptsDir).filter((f) => f.endsWith('.sh')).sort();
+    if (scripts.length) {
+      scriptLine =
+        `Use ONLY the bundled scripts in ${scriptsDir} for any external access ` +
+        `(run them via the shell): ${scripts.join(', ')}. Do not call external ` +
+        `APIs directly — the scripts enforce auth and allowed-value bounds.`;
+    }
+  } catch {
+    /* no scripts dir — the rubric stands on its own */
+  }
   return [
-    'You are running the jira-triage skill headlessly. Follow the rubric below',
-    'exactly. Use ONLY these bundled scripts for all Jira/GitLab access (run them',
-    `via the shell): ${scripts}/jira.sh and ${scripts}/gitlab.sh. Do not call the`,
-    'Jira or GitLab APIs directly — the scripts enforce auth and allowed-value',
-    'bounds. When finished, stop.',
+    'Follow the rubric below exactly. When finished, stop.',
+    ...(scriptLine ? [scriptLine] : []),
     '',
     '----- BEGIN SKILL RUBRIC (SKILL.md) -----',
     rubric,

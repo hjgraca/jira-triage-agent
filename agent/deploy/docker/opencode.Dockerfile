@@ -2,8 +2,8 @@
 # opencode authenticates via provider env vars / auth.json (set at runtime).
 #
 #   docker buildx build --platform linux/amd64 \
-#     -f deploy/docker/opencode.Dockerfile -t <repo>:opencode --build-arg BASE=triage-base agent
-ARG BASE=triage-base
+#     -f deploy/docker/opencode.Dockerfile -t <repo> --build-arg BASE=agent-base agent
+ARG BASE=agent-base
 FROM ${BASE}
 
 USER root
@@ -13,4 +13,4 @@ RUN curl -fsSL https://opencode.ai/install | bash \
  && bin="$(find /root/.opencode/bin /root/.local/bin -name opencode -type f 2>/dev/null | head -n1)" \
  && [ -n "$bin" ] && install -m 0755 "$bin" /usr/local/bin/opencode \
  && /usr/local/bin/opencode --version
-USER triage
+USER agent

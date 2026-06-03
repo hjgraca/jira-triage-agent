@@ -7,14 +7,16 @@ under `agent/` — it does **not** create a cluster, a VPC, or GitLab (that's th
 
 ## What you'll deploy
 
-- A **listener** pod (single replica) behind a dedicated LoadBalancer.
+- A thin, stateless **receiver** Deployment that creates **one Kubernetes Job per
+  event** (no long-lived runner — K8s handles dedupe, concurrency, timeout, retry).
 - A public HTTPS webhook endpoint — via **CloudFront** (no domain needed) or your
   own ALB + domain + TLS.
 - An **IRSA role** scoped to one Bedrock model (no static model credential).
 - A pluggable **coding-agent harness** — **pi** (Bedrock via IRSA),
   **kiro-cli**, or **opencode**, or bring your own. See
   [Choose your harness](03b-choose-harness.md).
-- The **`triage` namespace**: ServiceAccount, NetworkPolicy, ConfigMap, Secret.
+- The **`agents` namespace**: two ServiceAccounts, RBAC (receiver → create Jobs),
+  a ResourceQuota (concurrency), a NetworkPolicy, ConfigMap, and Secret.
 
 The agent then triggers when someone adds the `triage` label to a Jira ticket.
 

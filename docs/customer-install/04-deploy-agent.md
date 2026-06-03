@@ -55,25 +55,25 @@ REPO=<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
 aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin "${REPO%/*}"
 
 # base (engine) → pi (engine + CLI) → jira-triage (one agent).
-docker build -f agent/deploy/docker/base.Dockerfile   -t triage-base:local       agent
-docker build -f agent/deploy/docker/pi.Dockerfile     --build-arg BASE=triage-base:local -t triage-pi:local agent
-docker build -f agent/agents/jira-triage/Dockerfile   --build-arg BASE=triage-pi:local   -t "$REPO:latest"  agent
+docker build -f agent/deploy/docker/base.Dockerfile   -t agent-base:local       agent
+docker build -f agent/deploy/docker/pi.Dockerfile     --build-arg BASE=agent-base:local -t agent-pi:local agent
+docker build -f agent/agents/jira-triage/Dockerfile   --build-arg BASE=agent-pi:local   -t "$REPO:latest"  agent
 docker push "$REPO:latest"
 # (swap pi.Dockerfile → kiro/opencode; swap the agent Dockerfile for another agent)
 ```
 
-(The one-liner is `make triage-image AGENT=jira-triage HARNESS=pi`.)
+(The one-liner is `make agent-image AGENT=jira-triage HARNESS=pi`.)
 
 ## Step 3 — Fill in the manifests
 
 Copy the templated config/secret and set the placeholders.
 
 ```bash
-cp agent/deploy/k8s/triage-config.example.yaml  agent/deploy/k8s/triage-config.yaml    # fill (see Configure Jira §3)
-cp agent/deploy/k8s/triage-secrets.example.yaml agent/deploy/k8s/triage-secrets.yaml   # fill secrets
+cp agent/deploy/k8s/config.example.yaml  agent/deploy/k8s/config.yaml    # fill (see Configure Jira §3)
+cp agent/deploy/k8s/secrets.example.yaml agent/deploy/k8s/secrets.yaml   # fill secrets
 ```
 
-`agent/deploy/k8s/triage-secrets.yaml` — set the credentials. You need the auth secret
+`agent/deploy/k8s/secrets.yaml` — set the credentials. You need the auth secret
 for **your** trigger path (and may leave the other as a placeholder):
 
 | Key | Value |
@@ -83,90 +83,74 @@ for **your** trigger path (and may leave the other as a placeholder):
 | `webhook-hmac-secret` | `openssl rand -hex 32` — **DC/Server** (system webhook) path |
 | `automation-shared-secret` | `openssl rand -hex 32` — **Cloud** (Automation rule) path |
 
-`agent/deploy/k8s/triage-namespace.yaml` — set the ServiceAccount annotation to the
-`triage_bedrock_role_arn` output from step 1.
+`agent/deploy/k8s/namespace.yaml` — set the **agent-runner** ServiceAccount
+annotation to the `triage_bedrock_role_arn` output from step 1 (the run Jobs use
+it for Bedrock; the receiver needs no cloud creds).
 
-`agent/deploy/k8s/triage-listener.yaml` — set:
+`agent/deploy/k8s/receiver.yaml` — set:
 
-- `image:` → your `$REPO:latest`
-- `JIRA_BASE_URL` → your Jira base URL
-- `GITLAB_BASE_URL` → reachable GitLab URL (see [Configure GitLab](02-configure-gitlab.md#2-make-gitlab-reachable-from-the-cluster))
-- `AUTHORIZED_ACTORS` → comma-separated accountIds allowed to trigger (R6b)
-- `HARNESS` → `pi` (default) or `kiro-cli` — must match what you baked into the
-  image (step 2) and the credential you set (step 3). See
-  [Choose your harness](03b-choose-harness.md).
-- (optional) `TRIAGE_MODEL`, `MAX_CONCURRENT`, `SPAWN_CEILING`, `DAILY_BUDGET`
+- `image:` and the `AGENT_IMAGE` env → your `$REPO:latest` (the receiver stamps
+  this into the Jobs it creates — normally its own image).
+- `AUTHORIZED_ACTORS` → comma-separated accountIds allowed to trigger (R6b).
+- `RUN_ENV` → non-secret env for each run Job, e.g. `HARNESS=pi` (and
+  `GITLAB_BASE_URL=...`, `TRIAGE_MODEL=...`). Must match the harness baked into
+  the image — see [Choose your harness](03b-choose-harness.md).
+- `RUN_SECRET` / `RUN_CONFIGMAP` already point at `agent-secrets` / `agent-config`
+  — the run Job loads creds itself via `envFrom`, so the receiver never sees them.
+
+`count/pods` in `resourcequota.yaml` caps concurrent runs — tune to taste.
 
 ## Step 4 — Apply
 
 ```bash
-kubectl apply -f agent/deploy/k8s/triage-namespace.yaml
-kubectl apply -f agent/deploy/k8s/triage-config.yaml
-kubectl apply -f agent/deploy/k8s/triage-secrets.yaml
-kubectl apply -f agent/deploy/k8s/triage-netpol.yaml
-kubectl apply -f agent/deploy/k8s/triage-listener.yaml
+kubectl apply -f agent/deploy/k8s/namespace.yaml      # ns + 2 ServiceAccounts
+kubectl apply -f agent/deploy/k8s/rbac.yaml           # receiver → create Jobs
+kubectl apply -f agent/deploy/k8s/resourcequota.yaml  # concurrency cap
+kubectl apply -f agent/deploy/k8s/netpol.yaml         # run-pod egress fence
+kubectl apply -f agent/deploy/k8s/config.yaml
+kubectl apply -f agent/deploy/k8s/secrets.yaml
+kubectl apply -f agent/deploy/k8s/receiver.yaml
 
-kubectl -n triage rollout status deploy/triage-listener
+kubectl -n agents rollout status deploy/agent-receiver
 ```
 
-The pod becomes **Ready** only once it resolves the bot accountId via `/myself`
-(fail-closed readiness — without it the loop guard is blind). If it stays
-not-ready, check `JIRA_*` secret values and egress to Jira.
+The receiver is **stateless** — it's Ready as soon as it's up (no `/myself`, no
+warm-up). `make agent-deploy` runs this whole sequence.
 
-## Step 5 — Wire CloudFront and lock the origin (R10b)
+## Step 5 — Expose the receiver (CloudFront or your own ALB)
 
-Get the listener's LoadBalancer hostname, then run the **second** terraform apply
-to create CloudFront in front of it:
-
-```bash
-LB=$(kubectl get svc -n triage triage-listener \
-  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-
-cd agent/deploy/terraform
-terraform apply -var "listener_lb_dns=$LB"
-terraform output -raw triage_webhook_url          # → register in Jira (step 03)
-terraform output -json cloudfront_origin_cidrs    # → loadBalancerSourceRanges
-```
-
-Paste the `cloudfront_origin_cidrs` into
-`agent/deploy/k8s/triage-listener.yaml`'s `loadBalancerSourceRanges`, then re-apply the
-listener:
-
-```bash
-kubectl apply -f agent/deploy/k8s/triage-listener.yaml
-```
-
-Now only CloudFront can reach the public LB. Verify a **direct** POST to the LB
-hostname (bypassing CloudFront) is refused.
+Jira needs a public HTTPS URL that reaches the `agent-receiver` Service. Either
+front it with CloudFront (domain-free, from `agent/deploy/terraform`) or your own
+ALB + domain + TLS. Lock the origin so only your front door can reach the
+Service (CloudFront origin CIDRs / your ALB security group). The webhook URL you
+register in Jira is `https://<front-door>/webhook`.
 
 ## Step 6 — Register the trigger in Jira
 
 Go back to [Configure Jira](03-configure-jira.md) and create the **Automation
-rule** (Cloud) or **system webhook** (DC/Server) pointing at the
-`triage_webhook_url`.
+rule** (Cloud) or **system webhook** (DC/Server) pointing at your `/webhook` URL.
 
 ## Pre-launch verification (blocking)
 
 These can't be checked from code alone — they need the live cluster/Jira. Do all
-of them **before** pointing the trigger at a real project, because the agent
-writes to real tickets:
+of them **before** pointing the trigger at a real project:
 
+- [ ] **Receiver can create Jobs.** Send one signed test event and confirm a Job
+      appears: `kubectl -n agents get jobs`. If creation is forbidden, check
+      `rbac.yaml` is applied and the receiver uses the `agent-receiver` SA.
+- [ ] **Dedupe works.** Re-send the same delivery id — the second create returns
+      409 and is logged `duplicate`, no second Job.
 - [ ] **Real Jira API shapes.** With the bot token against a throwaway test
-      issue, confirm the v3 request shapes the skill assumes (comment ADF body,
-      `set-fields`, and whether issue-type is a field edit or a
-      transition-with-screen in your workflow). Fix `agent/agents/jira-triage/scripts/jira.sh`
-      if your instance differs.
-- [ ] **(DC/Server) Captured HMAC signature.** Trigger one real webhook to a
-      logging endpoint, capture the actual `X-Hub-Signature`, and confirm the
-      algorithm/prefix matches `runtime/listener/auth.js` (assumed `sha256=`).
-- [ ] **LB origin lock (R10b).** `loadBalancerSourceRanges` is populated with
-      `cloudfront_origin_cidrs` and re-applied. A direct POST to the LB is refused.
-- [ ] **NetworkPolicy enforcement.** `agent/deploy/k8s/triage-netpol.yaml` is inert
-      unless the VPC CNI network-policy controller is enabled
-      (`ENABLE_NETWORK_POLICY=true` on the `aws-node` add-on). Confirm it's on, or
-      the egress exfil boundary doesn't exist — see [Security](06-security.md).
-- [ ] **Daily spend budget.** `DAILY_BUDGET` (default 500 runs/24h) caps Bedrock
-      cost. `issue_created` has no per-actor authz, so this is the backstop if
-      issue creation is open to untrusted reporters. Set it to your tolerance.
+      issue, confirm the v3 request shapes the skill assumes. Fix
+      `agent/agents/jira-triage/scripts/jira.sh` if your instance differs.
+- [ ] **(DC/Server) Captured HMAC signature.** Confirm the actual
+      `X-Hub-Signature` algorithm/prefix matches `runtime/lib/auth.js` (`sha256=`).
+- [ ] **NetworkPolicy enforcement.** `netpol.yaml` is inert unless the VPC CNI
+      network-policy controller is enabled (`ENABLE_NETWORK_POLICY=true` on the
+      `aws-node` add-on). Confirm it's on, or the egress exfil boundary doesn't
+      exist — see [Security](06-security.md).
+- [ ] **Concurrency + spend.** Set `count/pods` in `resourcequota.yaml` to your
+      tolerance, and set an **AWS Budget / Bedrock quota** as the cumulative
+      dollar backstop (there is no in-app daily counter — see [Security](06-security.md)).
 
 Next → [Operations](05-operations.md)

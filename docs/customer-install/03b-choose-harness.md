@@ -35,7 +35,7 @@ result-reading differ — that's the whole point of the adapter layer.
 
 ## How to select
 
-Set `HARNESS` in `agent/deploy/k8s/triage-listener.yaml`:
+Set `HARNESS` in `agent/deploy/k8s/receiver.yaml`:
 
 ```yaml
 - name: HARNESS
@@ -44,12 +44,12 @@ Set `HARNESS` in `agent/deploy/k8s/triage-listener.yaml`:
 
 The harness is a **build layer**, not a runtime switch: the image is built as
 base (engine) → `<harness>` (engine + CLI) → `<agent>` (the one agent). Pick the
-harness at build time with `make triage-image AGENT=<name> HARNESS=<name>`; the
+harness at build time with `make agent-image AGENT=<name> HARNESS=<name>`; the
 raw three-step build is shown per harness below.
 
 ### Using pi (default)
 
-- **Image:** `make triage-image AGENT=jira-triage HARNESS=pi`.
+- **Image:** `make agent-image AGENT=jira-triage HARNESS=pi`.
 - **Credential:** none in the pod — the IRSA ServiceAccount supplies Bedrock
   access. Make sure `agent/deploy/terraform`'s `bedrock_model_id` matches `TRIAGE_MODEL`.
 - Nothing else to do; this is the path proven end-to-end in the workshop.
@@ -58,20 +58,20 @@ raw three-step build is shown per harness below.
 
 1. **Build the image with kiro:**
    ```bash
-   make triage-image AGENT=jira-triage HARNESS=kiro
+   make agent-image AGENT=jira-triage HARNESS=kiro
    # or, raw: base (engine) → kiro (engine + CLI) → agent (one agent)
-   docker build -f agent/deploy/docker/base.Dockerfile    -t triage-base:local       agent
-   docker build -f agent/deploy/docker/kiro.Dockerfile    --build-arg BASE=triage-base:local -t triage-kiro:local agent
-   docker build -f agent/agents/jira-triage/Dockerfile    --build-arg BASE=triage-kiro:local -t "$REPO:latest"  agent
+   docker build -f agent/deploy/docker/base.Dockerfile    -t agent-base:local       agent
+   docker build -f agent/deploy/docker/kiro.Dockerfile    --build-arg BASE=agent-base:local -t agent-kiro:local agent
+   docker build -f agent/agents/jira-triage/Dockerfile    --build-arg BASE=agent-kiro:local -t "$REPO:latest"  agent
    ```
-2. **Add the API key** to `agent/deploy/k8s/triage-secrets.yaml`:
+2. **Add the API key** to `agent/deploy/k8s/secrets.yaml`:
    ```yaml
    kiro-api-key: "ksk_xxxxxxxx"   # from https://app.kiro.dev
    ```
-   The listener already maps it to `KIRO_API_KEY` (`optional: true`, so pi
+   the receiver already maps it to `KIRO_API_KEY` (`optional: true`, so pi
    deployments are unaffected).
-3. **Set the harness:** `HARNESS: "kiro-cli"` in the listener manifest.
-4. Apply secret + listener and roll the deployment.
+3. **Set the harness:** `HARNESS: "kiro-cli"` in receiver.yaml.
+4. Apply secret + receiver and roll the deployment.
 
 > **Model on kiro:** `kiro-cli chat` has no `--model` flag — the model comes from
 > your Kiro default-model / agent configuration, so `TRIAGE_MODEL` is ignored for
@@ -85,24 +85,24 @@ raw three-step build is shown per harness below.
 
 1. **Build the image with opencode:**
    ```bash
-   make triage-image AGENT=jira-triage HARNESS=opencode
+   make agent-image AGENT=jira-triage HARNESS=opencode
    # or, raw: base → opencode → agent
-   docker build -f agent/deploy/docker/base.Dockerfile     -t triage-base:local         agent
-   docker build -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=triage-base:local -t triage-opencode:local agent
-   docker build -f agent/agents/jira-triage/Dockerfile     --build-arg BASE=triage-opencode:local -t "$REPO:latest" agent
+   docker build -f agent/deploy/docker/base.Dockerfile     -t agent-base:local         agent
+   docker build -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=agent-base:local -t agent-opencode:local agent
+   docker build -f agent/agents/jira-triage/Dockerfile     --build-arg BASE=agent-opencode:local -t "$REPO:latest" agent
    ```
-2. **Add the provider key** to `agent/deploy/k8s/triage-secrets.yaml`:
+2. **Add the provider key** to `agent/deploy/k8s/secrets.yaml`:
    ```yaml
    opencode-provider-key: "<your provider API key>"   # e.g. an Anthropic key
    ```
    The listener maps it to **`ANTHROPIC_API_KEY`** by default. For a different
-   provider, change that env `name:` in `triage-listener.yaml` to the var
+   provider, change that env `name:` in `receiver.yaml` to the var
    opencode's provider expects (run `opencode models` to see provider/model ids).
 3. **Set the harness + model:** `HARNESS: "opencode"`, and set the model in
    `provider/model` form via `OPENCODE_MODEL` (or `TRIAGE_MODEL` if it already
    has a provider prefix). A bare model id is ignored — opencode requires the
    provider prefix.
-4. Apply secret + listener and roll the deployment.
+4. Apply secret + receiver and roll the deployment.
 
 > **Model on opencode:** `opencode run` needs `--model provider/model` (e.g.
 > `anthropic/claude-sonnet-4-6`). The adapter passes it only when the configured

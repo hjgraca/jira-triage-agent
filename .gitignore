@@ -15,8 +15,8 @@ crash.log
 kubeconfig
 
 # Real triage secrets + config (only the .example templates are committed)
-agent/deploy/k8s/triage-secrets.yaml
-agent/deploy/k8s/triage-config.yaml
+agent/deploy/k8s/secrets.yaml
+agent/deploy/k8s/config.yaml
 
 # macOS junk
 .DS_Store

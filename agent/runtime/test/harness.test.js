@@ -12,9 +12,11 @@ const kiro = require('../harness/kiro-cli');
 const opencode = require('../harness/opencode');
 const { composeInlineSkillPrompt, _resetCache } = require('../harness/inline-skill');
 
+// Point at the real jira-triage agent dir so inline-skill discovers its scripts.
+const AGENT_DIR = path.join(__dirname, '..', '..', 'agents', 'jira-triage');
 const CTX = {
   key: 'KAN-9',
-  skillPath: '/agents/jira-triage',
+  skillPath: AGENT_DIR,
   model: 'us.anthropic.claude-sonnet-4-6',
   prompt: 'Triage Jira issue KAN-9 using the jira-triage skill. Act on exactly this one ticket, then stop.',
 };
@@ -42,7 +44,7 @@ test('pi.buildCommand emits the streaming-JSON + skill argv', () => {
     '--mode', 'json',
     '--provider', 'amazon-bedrock',
     '--model', 'us.anthropic.claude-sonnet-4-6',
-    '--skill', '/agents/jira-triage',
+    '--skill', AGENT_DIR,
     CTX.prompt,
   ]);
   assert.ok(cmd.env === undefined, 'pi adds no env (IRSA supplies creds)');
@@ -77,7 +79,8 @@ test('kiro.buildCommand emits headless + least-privilege trust + inlined prompt'
   assert.ok(cmd.args.includes('--no-interactive'));
   assert.ok(cmd.args.some((a) => a.startsWith('--trust-tools=')), 'uses --trust-tools, not --trust-all-tools');
   assert.ok(!cmd.args.includes('--trust-all-tools'));
-  // Last arg is the composed prompt (rubric inlined + scripts named + base prompt).
+  // Last arg is the composed prompt (rubric inlined + base prompt). CTX.skillPath
+  // is a real agent dir, so its bundled scripts are discovered + listed.
   const composed = cmd.args[cmd.args.length - 1];
   assert.match(composed, /jira\.sh/);
   assert.match(composed, /gitlab\.sh/);
@@ -95,29 +98,32 @@ test('kiro exposes no interpret() (non-streaming harness)', () => {
 });
 
 // --- shared inline-skill helper (kiro + opencode) ----------------------------
-test('inline-skill prompt inlines SKILL.md when present', () => {
+test('inline-skill inlines SKILL.md + discovers bundled scripts (agent-agnostic)', () => {
   _resetCache();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
   fs.writeFileSync(path.join(dir, 'SKILL.md'), '# RUBRIC SENTINEL 12345');
+  fs.mkdirSync(path.join(dir, 'scripts'));
+  fs.writeFileSync(path.join(dir, 'scripts', 'review.sh'), '#!/bin/sh\n');
   try {
     const p = composeInlineSkillPrompt(dir, 'BASE PROMPT SENTINEL');
     assert.match(p, /RUBRIC SENTINEL 12345/);
     assert.match(p, /BASE PROMPT SENTINEL/);
-    assert.match(p, /jira\.sh/);
-    assert.match(p, /gitlab\.sh/);
+    // Scripts are discovered from the dir, NOT hardcoded to jira.sh/gitlab.sh.
+    assert.match(p, /review\.sh/);
+    assert.doesNotMatch(p, /jira\.sh/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     _resetCache();
   }
 });
 
-test('inline-skill prompt is still usable when SKILL.md is missing (fail soft)', () => {
+test('inline-skill is usable with no SKILL.md and no scripts (fail soft, no script line)', () => {
   _resetCache();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-empty-'));
   try {
     const p = composeInlineSkillPrompt(dir, 'BASE');
-    assert.match(p, /jira\.sh/);
     assert.match(p, /BASE/);
+    assert.match(p, /Follow the rubric/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     _resetCache();

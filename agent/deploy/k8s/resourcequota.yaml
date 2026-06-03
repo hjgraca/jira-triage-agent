@@ -1,0 +1,17 @@
+# Concurrency cap for run Jobs — this REPLACES the old in-process spawn limiter.
+#
+# A ResourceQuota counting non-terminal pods bounds how many runs execute at
+# once: once the cap is hit, the API rejects new run pods and the Job's pods stay
+# Pending until a slot frees. Tune `count/pods` to your cost/throughput appetite.
+#
+# NOTE: this is a CONCURRENCY cap, not a cumulative/day budget. For a hard daily
+# spend ceiling, rely on AWS Budgets / Bedrock quotas (provider-side) — see
+# docs/customer-install/06-security.md.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: agent-run-concurrency
+  namespace: agents
+spec:
+  hard:
+    count/pods: "6"

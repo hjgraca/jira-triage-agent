@@ -6,10 +6,10 @@
 #
 #   make image AGENT=jira-triage HARNESS=pi
 #   # or raw:
-#   #   docker build -f deploy/docker/base.Dockerfile     -t triage-base:local        agent
-#   #   docker build -f deploy/docker/pi.Dockerfile        --build-arg BASE=triage-base:local -t triage-pi:local agent
-#   #   docker build -f agents/jira-triage/Dockerfile      --build-arg BASE=triage-pi:local   -t <repo>:latest  agent
-ARG BASE=triage-pi:local
+#   #   docker build -f deploy/docker/base.Dockerfile     -t agent-base:local        agent
+#   #   docker build -f deploy/docker/pi.Dockerfile        --build-arg BASE=agent-base:local -t agent-pi:local agent
+#   #   docker build -f agents/jira-triage/Dockerfile      --build-arg BASE=agent-pi:local   -t <repo>:latest  agent
+ARG BASE=agent-pi:local
 FROM ${BASE}
 
 # Copy exactly this one agent. The base created+owns /agents as uid 10001, so
