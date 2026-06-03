@@ -28,18 +28,24 @@ function buildJob(opts) {
     vars,
     env = [], // NON-secret literal env (e.g. HARNESS, MODEL)
     secretName, // Job pulls creds from this Secret via envFrom — NOT copied here
-    configMapName, // optional: allowed-value config via envFrom
+    configMapName, // allowed-value config, MOUNTED AS A FILE at configMountPath
+    configMountPath = '/etc/triage', // where the skill reads config.json (TRIAGE_CONFIG)
     serviceAccount = 'agent-runner',
     ttl = 3600, // delete finished Jobs after 1h
     deadline = 600, // hard wall-clock cap per run (the old watchdog)
     backoff = 1, // one retry on failure
   } = opts;
 
-  // The receiver never sees secret VALUES: the run pod loads them itself via
-  // envFrom. The receiver only stamps the (non-secret) vars + which secret to use.
-  const envFrom = [];
-  if (secretName) envFrom.push({ secretRef: { name: secretName } });
-  if (configMapName) envFrom.push({ configMapRef: { name: configMapName } });
+  // Secrets: flat key/value, injected via envFrom — the receiver never sees the
+  // values. Config: the skill reads it as a FILE (config.json), so the ConfigMap
+  // is mounted as a volume, not envFrom (a `config.json` key isn't a valid env name).
+  const envFrom = secretName ? [{ secretRef: { name: secretName } }] : [];
+  const volumes = [];
+  const volumeMounts = [];
+  if (configMapName) {
+    volumes.push({ name: 'config', configMap: { name: configMapName } });
+    volumeMounts.push({ name: 'config', mountPath: configMountPath, readOnly: true });
+  }
 
   return {
     apiVersion: 'batch/v1',
@@ -54,13 +60,18 @@ function buildJob(opts) {
         spec: {
           restartPolicy: 'Never',
           serviceAccountName: serviceAccount,
+          ...(volumes.length ? { volumes } : {}),
           containers: [
             {
               name: 'run',
               image,
+              // The image's default CMD is the receiver; a run Job is the OTHER
+              // entrypoint, so override the command explicitly.
+              command: ['node', 'runtime/run.js'],
               // RUN_VARS carries the trigger's parsed vars to run.js.
               env: [{ name: 'RUN_VARS', value: JSON.stringify(vars || {}) }, ...env],
               ...(envFrom.length ? { envFrom } : {}),
+              ...(volumeMounts.length ? { volumeMounts } : {}),
             },
           ],
         },

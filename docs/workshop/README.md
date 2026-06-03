@@ -132,21 +132,23 @@ cluster and the Bedrock role. Follow:
    workshop Makefile shortcuts:
 
    ```bash
-   make agent-image            # build + push the image to ECR
-   # set the IRSA ARN, secrets, config, AUTHORIZED_ACTORS, JIRA_BASE_URL (see deploy guide)
-   make triage                  # apply agent/deploy/k8s manifests
-   # then wire CloudFront:
+   make agent-image             # build + push the agent image to ECR (AGENT/HARNESS)
+   # set the agent-runner IRSA ARN (namespace.yaml), secrets, config,
+   # AGENT_IMAGE + AUTHORIZED_ACTORS (receiver.yaml) — see the deploy guide
+   make agent-deploy            # apply agent/deploy/k8s manifests
+   # then wire CloudFront in front of the receiver's LoadBalancer:
    LB=$(kubectl get svc -n agents agent-receiver \
      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
    terraform -chdir=workshop/terraform apply -var "triage_listener_lb_dns=$LB"
-   terraform -chdir=workshop/terraform output -raw triage_webhook_url
-   terraform -chdir=workshop/terraform output -json cloudfront_origin_cidrs
+   terraform -chdir=workshop/terraform output -raw triage_webhook_url        # → register in Jira
+   terraform -chdir=workshop/terraform output -json cloudfront_origin_cidrs  # → loadBalancerSourceRanges
    ```
 
 The Bedrock IRSA role and CloudFront here come from **`workshop/terraform`**
-(not `agent/deploy/terraform`), because the lab manages cluster and cloud deps in one
-state. Everything else (manifests, image, skill) is identical to the customer
-path.
+(not `agent/deploy/terraform`), because the lab manages cluster and cloud deps in
+one state. The CloudFront distribution fronts the `agent-receiver` LoadBalancer
+(its `loadBalancerSourceRanges` are already the CloudFront origin CIDRs).
+Everything else (manifests, image, skill) is identical to the customer path.
 
 ## Security
 

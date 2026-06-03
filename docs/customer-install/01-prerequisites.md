@@ -58,10 +58,10 @@ The pod must reach, on egress:
 - **Your Jira** (HTTPS) — Cloud (`*.atlassian.net`) or your Data Center host.
 - **Your GitLab** — in-cluster Service DNS, or a reachable URL.
 
-And Jira must reach your **webhook endpoint** on ingress. If your cluster's nodes
-have no public ingress path, you'll use CloudFront (default in
-[Deploy](04-deploy-agent.md)); the dedicated LoadBalancer is then locked to
-CloudFront's origin CIDRs.
+And Jira must reach the **receiver's webhook endpoint** on ingress. Front the
+`agent-receiver` Service with CloudFront (default in [Deploy](04-deploy-agent.md))
+or your own ALB, and lock the origin so only that front door can reach the
+Service.
 
 > If the cluster enforces NetworkPolicy (AWS VPC CNI with the network-policy
 > controller enabled), the bundled `agent/deploy/k8s/netpol.yaml` egress

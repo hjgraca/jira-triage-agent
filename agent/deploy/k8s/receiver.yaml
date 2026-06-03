@@ -6,7 +6,7 @@
 # It runs the SAME agent image as the Jobs it creates (command → receiver.js),
 # so the gate reads the exact SKILL.md the run will use.
 #
-# Set <AGENT_IMAGE> to your built agent image (Makefile: make agent-image …).
+# Set 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91 to your built agent image (Makefile: make agent-image …).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,17 +30,19 @@ spec:
         runAsUser: 10001
       containers:
         - name: receiver
-          image: <AGENT_IMAGE>
+          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91
           command: ["node", "runtime/receiver.js"]
           ports:
             - { name: http, containerPort: 8080 }
           env:
-            - { name: WEBHOOK_PATH, value: "/webhook" }
+            # Must match the path in the CloudFront/terraform triage_webhook_url
+            # output (CloudFront forwards the path through to the receiver).
+            - { name: WEBHOOK_PATH, value: "/jira-webhook" }
             - { name: TRIGGER, value: "jira" }
             # The image to stamp into run Jobs — normally this same image.
-            - { name: AGENT_IMAGE, value: "<AGENT_IMAGE>" }
+            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91" }
             # Non-secret env passed to each run Job (harness + model).
-            - { name: RUN_ENV, value: "HARNESS=pi" }
+            - { name: RUN_ENV, value: "HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
             # Run Jobs load creds themselves from these (envFrom) — the receiver
             # never sees secret values.
             - { name: RUN_SECRET, value: "agent-secrets" }
@@ -54,7 +56,7 @@ spec:
               valueFrom: { secretKeyRef: { name: agent-secrets, key: automation-shared-secret, optional: true } }
             # Who may trigger via the label (R6b); ∪ the agent def's own list.
             - name: AUTHORIZED_ACTORS
-              value: "<COMMA_SEPARATED_ACCOUNT_IDS>"
+              value: "557058:2ead7aac-3eea-430f-9f79-4967084b8264"
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 10
@@ -65,6 +67,14 @@ spec:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { memory: 128Mi }
 ---
+# Public LoadBalancer fronting the receiver, locked to CloudFront's origin CIDRs
+# (R10b) so only CloudFront can reach it. CloudFront (agent/deploy/terraform, or
+# workshop/terraform in the lab) is its origin; the webhook URL Jira calls is the
+# CloudFront URL. If you front the receiver with your own ALB+TLS instead, change
+# this to ClusterIP and point the ALB at it.
+#
+# Refresh loadBalancerSourceRanges if AWS updates the prefix list: re-run
+# `terraform output -json cloudfront_origin_cidrs` and re-apply.
 apiVersion: v1
 kind: Service
 metadata:
@@ -72,7 +82,56 @@ metadata:
   namespace: agents
   labels:
     app.kubernetes.io/name: agent-receiver
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "classic"
 spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+    - 13.124.199.0/24
+    - 130.176.0.0/18
+    - 130.176.128.0/21
+    - 130.176.136.0/23
+    - 130.176.140.0/22
+    - 130.176.144.0/20
+    - 130.176.160.0/19
+    - 130.176.192.0/19
+    - 130.176.64.0/21
+    - 130.176.72.0/22
+    - 130.176.76.0/24
+    - 130.176.78.0/23
+    - 130.176.80.0/22
+    - 130.176.86.0/23
+    - 130.176.88.0/21
+    - 130.176.96.0/19
+    - 15.158.0.0/16
+    - 18.68.0.0/16
+    - 204.246.166.0/24
+    - 205.251.218.0/24
+    - 3.172.0.0/18
+    - 3.172.64.0/18
+    - 3.29.57.0/26
+    - 52.46.0.0/18
+    - 52.82.128.0/23
+    - 52.82.134.0/23
+    - 54.182.128.0/20
+    - 54.182.144.0/21
+    - 54.182.154.0/23
+    - 54.182.156.0/22
+    - 54.182.160.0/21
+    - 54.182.172.0/22
+    - 54.182.176.0/21
+    - 54.182.184.0/22
+    - 54.182.188.0/23
+    - 54.182.224.0/21
+    - 54.182.240.0/21
+    - 54.182.248.0/22
+    - 54.239.134.0/23
+    - 54.239.170.0/23
+    - 54.239.204.0/22
+    - 54.239.208.0/21
+    - 64.252.128.0/18
+    - 64.252.64.0/18
+    - 70.132.0.0/18
   selector:
     app.kubernetes.io/name: agent-receiver
   ports:
