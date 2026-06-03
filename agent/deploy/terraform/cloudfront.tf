@@ -68,11 +68,20 @@ resource "aws_cloudfront_distribution" "agent" {
   tags = var.tags
 }
 
-# R10b origin lock: the listener LB's security group must allow inbound 80 ONLY
-# from CloudFront's managed prefix list. The LB + SG are created by Kubernetes,
-# so these CIDRs are surfaced as an output to paste into the Service's
-# loadBalancerSourceRanges (agent/k8s/triage-listener.yaml).
+# R10b origin lock. The listener LB's security group must allow inbound 80 ONLY
+# from CloudFront's managed prefix list. With the LBC-managed NLB (the default —
+# see agent/deploy/k8s/receiver.yaml), reference the prefix list as a SINGLE SG
+# rule via the Service annotation `...-security-group-prefix-lists` — use the id
+# output below. (The raw CIDR list is also surfaced, for the legacy classic-ELB /
+# own-ALB paths, but note: ~45 CIDRs as classic-ELB loadBalancerSourceRanges
+# overflow the 60-rules-per-SG limit and the LB won't provision — prefer the NLB.)
 data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
   count = local.cf_enabled ? 1 : 0
   name  = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+# The prefix-list id itself — the preferred origin lock for the NLB path. Not
+# gated on cf_enabled because the Service manifest needs it before any LB exists.
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing_id" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
 }

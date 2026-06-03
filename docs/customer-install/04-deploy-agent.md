@@ -119,9 +119,37 @@ warm-up). `make agent-deploy` runs this whole sequence.
 
 ## Step 5 — Expose the receiver (CloudFront or your own ALB)
 
-`receiver.yaml` creates the `agent-receiver` Service as a **LoadBalancer locked
-to CloudFront's origin CIDRs** (R10b) — so it's reachable only through CloudFront,
-which `agent/deploy/terraform` provisions as its origin:
+`receiver.yaml` creates the `agent-receiver` Service as an **NLB managed by the
+AWS Load Balancer Controller, locked to CloudFront's origin via a managed prefix
+list** (R10b) — reachable only through CloudFront, which `agent/deploy/terraform`
+provisions as its origin.
+
+> **Why an NLB + prefix list, not a classic ELB + CIDR ranges?** CloudFront's
+> origin range is ~45 CIDRs. The in-tree classic-ELB provider turns
+> `loadBalancerSourceRanges` into **one security-group rule per CIDR** — ~45
+> rules, which overflows the **60-rules-per-SG limit**, so the LB silently never
+> provisions (`RulesPerSecurityGroupLimitExceeded`). The LBC can instead
+> reference the whole CloudFront prefix list as a **single** SG rule. That's why
+> the Service uses `loadBalancerClass: service.k8s.aws/nlb` and the
+> `aws-load-balancer-security-group-prefix-lists` annotation.
+
+**Prerequisite — the AWS Load Balancer Controller** must be installed in the
+cluster (it owns the `service.k8s.aws/nlb` class). Most production EKS clusters
+already run it: `kubectl -n kube-system get deploy aws-load-balancer-controller`.
+If absent, install it (Helm chart `eks-charts/aws-load-balancer-controller` with
+an IRSA role carrying the LBC policy) before applying `receiver.yaml`.
+
+Set the prefix-list id for **your** region in the Service annotation
+(`receiver.yaml`) — it defaults to the `us-west-2` id:
+
+```bash
+cd agent/deploy/terraform
+terraform output -raw cloudfront_origin_prefix_list_id   # → pl-xxxxxxxx for your region
+# put it in receiver.yaml:
+#   service.beta.kubernetes.io/aws-load-balancer-security-group-prefix-lists: "pl-xxxxxxxx"
+```
+
+Then wire CloudFront to the NLB hostname:
 
 ```bash
 LB=$(kubectl -n agents get svc agent-receiver \
@@ -129,15 +157,16 @@ LB=$(kubectl -n agents get svc agent-receiver \
 cd agent/deploy/terraform
 terraform apply -var "listener_lb_dns=$LB"
 terraform output -raw triage_webhook_url          # → the /jira-webhook URL for Jira
-terraform output -json cloudfront_origin_cidrs    # → keep loadBalancerSourceRanges current
 ```
 
-Prefer your **own ALB + domain + TLS**? Change the Service to `ClusterIP`, point
-the ALB at it, and lock the origin with the ALB security group / WAF instead. The
-webhook URL you register in Jira is then `https://<your-domain>/webhook`.
+Prefer your **own ALB + domain + TLS**? Change the Service to `ClusterIP`, drop
+the NLB annotations, point the ALB at it, and lock the origin with the ALB
+security group / WAF instead. The webhook URL you register in Jira is then
+`https://<your-domain>/webhook`.
 
 > **Verify the lock:** a direct request to the LB hostname (bypassing CloudFront)
-> must be refused.
+> must be refused (it will hang/time out — only the CloudFront prefix list is
+> allowed inbound).
 
 ## Step 6 — Register the trigger in Jira
 

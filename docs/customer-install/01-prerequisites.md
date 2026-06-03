@@ -63,6 +63,13 @@ And Jira must reach the **receiver's webhook endpoint** on ingress. Front the
 or your own ALB, and lock the origin so only that front door can reach the
 Service.
 
+> The default CloudFront path provisions the receiver as an **NLB managed by the
+> AWS Load Balancer Controller**, so it can lock the origin to CloudFront's
+> managed prefix list with a single SG rule (a classic ELB + ~45 CIDR ranges
+> overflows the 60-rules-per-SG limit and won't provision). The LBC must be
+> installed in the cluster — `kubectl -n kube-system get deploy
+> aws-load-balancer-controller`. See [Deploy → Step 5](04-deploy-agent.md).
+
 > If the cluster enforces NetworkPolicy (AWS VPC CNI with the network-policy
 > controller enabled), the bundled `agent/deploy/k8s/netpol.yaml` egress
 > allowlist applies. If it does **not** enforce policy, that file is inert — see

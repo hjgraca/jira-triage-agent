@@ -1,8 +1,21 @@
 # Concurrency cap for run Jobs — this REPLACES the old in-process spawn limiter.
 #
-# A ResourceQuota counting non-terminal pods bounds how many runs execute at
-# once: once the cap is hit, the API rejects new run pods and the Job's pods stay
-# Pending until a slot frees. Tune `count/pods` to your cost/throughput appetite.
+# Uses the first-class `pods` quota key, NOT `count/pods`. The difference matters:
+#   • `pods`       counts only NON-TERMINAL pods (Pending/Running). Succeeded and
+#                  Failed pods are excluded — so a finished run frees its slot
+#                  immediately, even though its pod lingers until ttl deletes it.
+#   • `count/pods` counts ALL pods, including Completed/Failed ones that hang
+#                  around for ttlSecondsAfterFinished (1h) — which would wedge the
+#                  cap shut long after the runs themselves finished.
+#
+# CAVEAT: this quota is namespace-wide, so it also counts the receiver
+# Deployment's own (Running) pods. The effective cap is therefore:
+#
+#     pods = (receiver replicas) + (max concurrent runs)
+#
+# With replicas: 2 and a target of 4 concurrent runs, set pods: "6". Re-tune both
+# together. (For a per-run-only count with no receiver pollution, runs would need
+# their own namespace — a heavier change that also re-points the IRSA trust.)
 #
 # NOTE: this is a CONCURRENCY cap, not a cumulative/day budget. For a hard daily
 # spend ceiling, rely on AWS Budgets / Bedrock quotas (provider-side) — see
@@ -14,4 +27,5 @@ metadata:
   namespace: agents
 spec:
   hard:
-    count/pods: "6"
+    # 2 receiver replicas + up to 4 concurrent runs. Counts non-terminal pods only.
+    pods: "6"

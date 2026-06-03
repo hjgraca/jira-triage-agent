@@ -32,11 +32,14 @@ fenced.
 ### Origin lock — **you must verify this**
 
 Whatever fronts the receiver (CloudFront or your own ALB) must be the *only* path
-to the `agent-receiver` Service — lock it to the front door's source ranges
-(CloudFront origin CIDRs / your ALB security group / WAF). Until that's applied,
-auth is the only gate.
+to the `agent-receiver` Service. The default path locks it to CloudFront's
+**origin-facing managed prefix list** as a single SG rule (the LBC-managed NLB's
+`aws-load-balancer-security-group-prefix-lists` annotation); a custom ALB locks
+it with the ALB's security group / WAF. Until that's applied, auth is the only
+gate.
 
-- **Confirm:** a direct request to the Service (bypassing the front door) is refused.
+- **Confirm:** a direct request to the Service hostname (bypassing the front
+  door) is refused — it hangs/times out, since only the prefix list is allowed.
 
 ### Receiver privilege (RBAC)
 
@@ -59,8 +62,8 @@ events have **no** per-actor authz (anyone who can create issues can trigger), s
 the **ResourceQuota** (concurrency) + an **AWS Budget** (cumulative dollars) are
 the backstops there.
 
-- **Confirm:** who can create issues in the target project, and set `count/pods`
-  + an AWS Budget to a tolerance that matches that exposure.
+- **Confirm:** who can create issues in the target project, and set the `pods`
+  quota + an AWS Budget to a tolerance that matches that exposure.
 
 ### Allowed-value sets (R2) — fail closed
 
