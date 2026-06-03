@@ -1,9 +1,10 @@
 # 03b — Choose Your Harness
 
-The agent's "brain" is a headless coding-agent CLI that the listener spawns once
-per ticket. It's **pluggable** — the listener is harness-agnostic, so you pick the
-one that fits your subscription and model story. Two are built in; adding a third
-is a small adapter file.
+The agent's "brain" is a headless coding-agent CLI that each run Job spawns once
+per ticket. It's **pluggable** — the engine is harness-agnostic, so you pick the
+one that fits your subscription and model story. **Three are built in**
+(pi, kiro-cli, opencode — all three proven end-to-end); adding a fourth is a
+small adapter file.
 
 ← [Configure Jira](03-configure-jira.md) · Next → [Deploy the agent](04-deploy-agent.md)
 
@@ -19,12 +20,45 @@ is a small adapter file.
 | Subscription | AWS Bedrock model access | Kiro **Pro / Pro+ / Power** | AWS Bedrock access, or a provider account (e.g. Anthropic) |
 | Skill loading | native `--skill <path>` | rubric **inlined** | rubric **inlined** |
 | Output | streaming JSON | final response; result from **exit code** | streaming JSON + exit code |
-| Model selection | `TRIAGE_MODEL` | Kiro default-model/agent config (`TRIAGE_MODEL` ignored) | `OPENCODE_MODEL` or `TRIAGE_MODEL` if `provider/model`-shaped |
+| Model selection | `MODEL` env | Kiro default-model/agent config (`MODEL` ignored) | `OPENCODE_MODEL` (or `MODEL` if it's `provider/model`-shaped) |
 | Permissions | n/a (skill scripts) | `--trust-tools=read,execute_bash` | `--dangerously-skip-permissions` (scripts are the guardrail) |
+| Proven on | KAN-2 (Bedrock) | KAN-6 (Kiro Pro) | KAN-7 (Bedrock/IRSA) |
 
 All three run the **same** `jira-triage` skill (same rubric, same
-`jira.sh`/`gitlab.sh` scripts, same guardrails). Only the invocation and
-result-reading differ — that's the whole point of the adapter layer.
+`jira.sh`/`gitlab.sh` scripts, same guardrails). Only the invocation, the
+credential, and result-reading differ — that's the whole point of the adapter
+layer.
+
+### Receiver `RUN_ENV` per harness (the one thing you set)
+
+The receiver passes `RUN_ENV` (a comma-separated `K=V` list in
+`agent/deploy/k8s/receiver.yaml`) verbatim to every run Job. **This is where you
+select the harness, the model, and any harness-specific env.** Copy the row for
+your harness:
+
+| Harness | `RUN_ENV` | Secret key needed | IRSA role used |
+|---|---|---|---|
+| **pi** | `HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
+| **kiro-cli** | `HARNESS=kiro-cli,GITLAB_BASE_URL=…` *(no MODEL — Kiro account picks it)* | `KIRO_API_KEY` | none |
+| **opencode** (Bedrock) | `HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
+| **opencode** (provider key) | `HARNESS=opencode,OPENCODE_MODEL=anthropic/claude-sonnet-4-6,GITLAB_BASE_URL=…` | `ANTHROPIC_API_KEY` | none |
+
+Notes that bite if you skip them:
+- **`HARNESS` is the adapter name** (`pi` / `kiro-cli` / `opencode`) — *not* the
+  Dockerfile/build arg (`pi` / `kiro` / `opencode`). They differ for kiro
+  (`HARNESS=kiro-cli`, but `make … HARNESS=kiro`).
+- **`MODEL` is the env the engine reads** (not `TRIAGE_MODEL`). pi passes it as
+  `--model`; opencode reads `OPENCODE_MODEL` first, then `MODEL` only if it
+  already has a `provider/` prefix; kiro ignores both.
+- **opencode on Bedrock needs `AWS_REGION`** in `RUN_ENV`, and the model id must
+  carry the `amazon-bedrock/` prefix + the `us.` inference profile your IRSA
+  policy allows.
+- Secret keys are **UPPER_SNAKE_CASE** (`KIRO_API_KEY`, `ANTHROPIC_API_KEY`) — the
+  Job loads the secret via `envFrom`, which maps keys verbatim to env vars; a
+  dash-cased key is silently dropped (see [Deploy → Step 3](04-deploy-agent.md)).
+- For the **IRSA (Bedrock) harnesses**, `agent/deploy/terraform`'s
+  `bedrock_model_id` must match the model in `RUN_ENV`, or the scoped IAM policy
+  denies the call.
 
 > **opencode `run` vs `serve`.** opencode also has a long-lived HTTP server
 > (`opencode serve`). We use **`opencode run`** (spawn-per-ticket, exits) because
@@ -35,24 +69,34 @@ result-reading differ — that's the whole point of the adapter layer.
 
 ## How to select
 
-Set `HARNESS` in `agent/deploy/k8s/receiver.yaml`:
+The harness is selected in **two places that must agree**:
 
-```yaml
-- name: HARNESS
-  value: "pi"        # or "kiro-cli"
-```
+1. **Build** — the CLI is baked into the image as a layer:
+   base (engine) → `<harness>` (engine + CLI) → `<agent>` (the one agent).
+   `make agent-image AGENT=jira-triage HARNESS=<pi|kiro|opencode>`.
+2. **Runtime** — `HARNESS` in `receiver.yaml`'s `RUN_ENV` names the **adapter**
+   the run Job uses (and must match the CLI baked into the image):
 
-The harness is a **build layer**, not a runtime switch: the image is built as
-base (engine) → `<harness>` (engine + CLI) → `<agent>` (the one agent). Pick the
-harness at build time with `make agent-image AGENT=<name> HARNESS=<name>`; the
-raw three-step build is shown per harness below.
+   ```yaml
+   - name: RUN_ENV
+     value: "HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…"
+   ```
+
+When you switch harness you change **both** the `image:`/`AGENT_IMAGE` (to the
+image built with that CLI) **and** `RUN_ENV` (per the table above), then
+`kubectl apply -f receiver.yaml` and roll the deployment.
+
+> **Build arg vs adapter name.** `make … HARNESS=kiro` builds `kiro.Dockerfile`,
+> but the runtime adapter is `kiro-cli` → `RUN_ENV` must say `HARNESS=kiro-cli`.
+> pi and opencode use the same word for both.
 
 ### Using pi (default)
 
 - **Image:** `make agent-image AGENT=jira-triage HARNESS=pi`.
-- **Credential:** none in the pod — the IRSA ServiceAccount supplies Bedrock
-  access. Make sure `agent/deploy/terraform`'s `bedrock_model_id` matches `TRIAGE_MODEL`.
-- Nothing else to do; this is the path proven end-to-end in the workshop.
+- **Credential:** none in the pod — the `agent-runner` IRSA ServiceAccount
+  supplies Bedrock access. Make sure `agent/deploy/terraform`'s `bedrock_model_id`
+  matches the `MODEL` in `RUN_ENV`.
+- `RUN_ENV`: `HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…`.
 
 ### Using kiro-cli
 
@@ -75,8 +119,9 @@ raw three-step build is shown per harness below.
 4. Apply secret + receiver and roll the deployment.
 
 > **Model on kiro:** `kiro-cli chat` has no `--model` flag — the model comes from
-> your Kiro default-model / agent configuration, so `TRIAGE_MODEL` is ignored for
-> this harness. Configure the default model in your Kiro account.
+> your Kiro default-model / agent configuration, so the `MODEL` env is ignored
+> for this harness (omit it from `RUN_ENV`). Configure the default model in your
+> Kiro account.
 
 > **Governance:** any MCP / model / web-fetch policies your Kiro administrator
 > sets apply to headless sessions too. If your pipeline depends on MCP servers,
@@ -125,9 +170,18 @@ raw three-step build is shown per harness below.
 
 ## Bring your own harness
 
-The listener selects adapters from `agent/runtime/harness/`. To support a
-different CLI, drop in one adapter file (`buildCommand` + optional `interpret` +
-`finalize`), register it, install it in the Dockerfile, and set `HARNESS` to its
-name. Full guide: **[agent/runtime/harness/README.md](../../agent/runtime/harness/README.md)**.
+The engine selects adapters from `agent/runtime/harness/`. To support a different
+CLI: drop in one adapter file (`buildCommand` + optional `interpret` +
+`finalize`), register it in `index.js`, add a `deploy/docker/<harness>.Dockerfile`
+that installs the CLI, then set `image`/`AGENT_IMAGE` to the built image and
+`HARNESS=<adapter>` in `RUN_ENV`. Full guide:
+**[agent/runtime/harness/README.md](../../agent/runtime/harness/README.md)**.
+
+> **Dockerfile gotcha** (hit by both kiro and opencode): the base image sets
+> `HOME=/home/agent` and the CLI installer runs as root, so the binary lands in
+> `/home/agent/.local/bin` (not `/root`) and leaves `~/.local` root-owned. Your
+> Dockerfile must `find` the binary there and `chown -R 10001:10001 /home/agent`
+> so the non-root runtime user can write the CLI's state — see `kiro.Dockerfile`
+> / `opencode.Dockerfile`.
 
 Next → [Deploy the agent](04-deploy-agent.md)

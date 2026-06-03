@@ -99,9 +99,11 @@ it for Bedrock; the receiver needs no cloud creds).
 - `image:` and the `AGENT_IMAGE` env → your `$REPO:latest` (the receiver stamps
   this into the Jobs it creates — normally its own image).
 - `AUTHORIZED_ACTORS` → comma-separated accountIds allowed to trigger (R6b).
-- `RUN_ENV` → non-secret env for each run Job, e.g. `HARNESS=pi` (and
-  `GITLAB_BASE_URL=...`, `TRIAGE_MODEL=...`). Must match the harness baked into
-  the image — see [Choose your harness](03b-choose-harness.md).
+- `RUN_ENV` → non-secret env for each run Job: `HARNESS=<adapter>`, `MODEL`/
+  `OPENCODE_MODEL`, `GITLAB_BASE_URL`, etc. The exact `RUN_ENV` differs per
+  harness — copy the row for yours from
+  [Choose your harness → Receiver `RUN_ENV` per harness](03b-choose-harness.md#receiver-run_env-per-harness-the-one-thing-you-set).
+  It must match the harness baked into the image.
 - `RUN_SECRET` / `RUN_CONFIGMAP` already point at `agent-secrets` / `agent-config`
   — the run Job loads creds itself via `envFrom`, so the receiver never sees them.
 

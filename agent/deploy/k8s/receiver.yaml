@@ -6,8 +6,17 @@
 # It runs the SAME agent image as the Jobs it creates (command → receiver.js),
 # so the gate reads the exact SKILL.md the run will use.
 #
-# Set the image below to your built agent image (Makefile: make agent-image …).
-# Currently the kiro-cli build: agent:jira-triage-kiro-<sha>-fix1.
+# Set the image below to your built agent image (Makefile: make agent-image …),
+# and RUN_ENV's HARNESS to the matching adapter. Currently the opencode build.
+#
+# HARNESS / RUN_ENV per harness (see docs/customer-install/03b-choose-harness.md):
+#   pi             RUN_ENV: HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…
+#                  cred: none (agent-runner IRSA → Bedrock)
+#   kiro-cli       RUN_ENV: HARNESS=kiro-cli,GITLAB_BASE_URL=…   (no MODEL; Kiro account picks it)
+#                  cred: KIRO_API_KEY in agent-secrets
+#   opencode       RUN_ENV: HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=…
+#                  cred: none (agent-runner IRSA → Bedrock) — or a provider key (e.g. ANTHROPIC_API_KEY) + OPENCODE_MODEL=anthropic/…
+# NOTE: HARNESS is the ADAPTER name (kiro-cli), not the build arg (kiro).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
