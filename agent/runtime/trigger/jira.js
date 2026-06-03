@@ -5,13 +5,20 @@
 // eligibility. All the Jira-specific shape lives here; the listener core is
 // trigger-agnostic.
 
-const { verifySignature, verifySharedSecret } = require('../listener/auth');
+const { verifySignature, verifySharedSecret } = require('../lib/auth');
 
 const TRIGGER_LABEL = process.env.TRIGGER_LABEL || 'triage';
 const AUTOMATION_TOKEN_HEADER = 'x-triage-token';
 // Event the Jira Automation rule sets in its custom body (it can't send a Jira
 // changelog), eligible by construction — its own label condition is the gate.
 const AUTOMATION_LABEL_EVENT = 'automation:label-added';
+
+// The bot's own accountId, for the loop guard (drop the agent's own writes).
+// This is Jira-specific config and lives HERE, in the Jira trigger — NOT in the
+// engine. The operator sets it once (the docs show the GET /myself one-liner to
+// obtain it); the engine never makes a Jira API call. A stateless fallback (the
+// loop marker in the comment body) still guards if this is unset.
+const BOT_ACCOUNT_ID = process.env.JIRA_BOT_ACCOUNT_ID || '';
 
 /**
  * Authenticate: HMAC over the raw body (system webhook) OR a constant-time
@@ -68,16 +75,17 @@ function payloadCarriesMarker(payload, marker) {
  * runtime state. Returns { action:'spawn', vars } or { action:'drop', reason }.
  *
  * vars = template variables exposed to the agent's prompt ({{key}}).
- * state = { botActor, loopMarker } (loop-guard inputs the core supplies).
+ * state = { loopMarker } (the agent's self-write marker, from the agent def).
  */
 function decide(payload, def, state) {
   const event = payload?.webhookEvent;
   const actorId = payload?.user?.accountId || null;
 
-  // Loop guard (R7): drop the agent's own writes — by bot actor id, or
-  // statelessly by the agent's loop marker appearing in the triggering comment.
-  if (state.botActor && actorId && actorId === state.botActor) {
-    return { action: 'drop', reason: 'loop-guard: bot actor' };
+  // Loop guard (R7): drop the agent's own writes — by bot accountId (from this
+  // trigger's own env config, not the engine), or statelessly by the agent's
+  // loop marker appearing in the triggering comment.
+  if (BOT_ACCOUNT_ID && actorId && actorId === BOT_ACCOUNT_ID) {
+    return { action: 'drop', reason: 'loop-guard: bot accountId' };
   }
   if (state.loopMarker && payloadCarriesMarker(payload, state.loopMarker)) {
     return { action: 'drop', reason: 'loop-guard: self-write marker' };
@@ -121,4 +129,5 @@ module.exports = {
   payloadCarriesMarker,
   TRIGGER_LABEL,
   AUTOMATION_LABEL_EVENT,
+  BOT_ACCOUNT_ID,
 };

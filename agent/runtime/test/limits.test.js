@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { DedupeCache, SpawnLimiter } = require('../listener/limits');
+const { DedupeCache, SpawnLimiter } = require('../lib/limits');
 
 // --- dedupe (R8) -------------------------------------------------------------
 test('duplicate identifier is detected; TTL floor is >=24h', () => {

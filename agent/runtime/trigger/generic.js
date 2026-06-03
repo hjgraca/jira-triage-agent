@@ -15,9 +15,10 @@
 //   { "vars": { ... }, "dedupeId"?: "..." }   // vars become {{...}} in the prompt
 // or any flat JSON object, which is used directly as vars.
 
-const { verifySignature, verifySharedSecret } = require('../listener/auth');
+const { verifySignature, verifySharedSecret } = require('../lib/auth');
 
-const TOKEN_HEADER = process.env.GENERIC_TOKEN_HEADER || 'x-triage-token';
+const TOKEN_HEADER = process.env.GENERIC_TOKEN_HEADER || 'x-agent-token';
+const DELIVERY_HEADER = process.env.GENERIC_DELIVERY_HEADER || 'x-agent-delivery-id';
 
 function authenticate(headers, rawBody, secrets) {
   if (verifySignature(rawBody, headers['x-hub-signature'], secrets.hmac)) {
@@ -31,8 +32,7 @@ function authenticate(headers, rawBody, secrets) {
 
 function dedupeId(headers, payload) {
   return (
-    headers['x-triage-delivery-id'] ||
-    headers['x-atlassian-webhook-identifier'] ||
+    headers[DELIVERY_HEADER] ||
     (payload && payload.dedupeId) ||
     undefined
   );

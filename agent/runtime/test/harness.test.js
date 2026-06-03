@@ -77,11 +77,11 @@ test('kiro.buildCommand emits headless + least-privilege trust + inlined prompt'
   assert.ok(cmd.args.includes('--no-interactive'));
   assert.ok(cmd.args.some((a) => a.startsWith('--trust-tools=')), 'uses --trust-tools, not --trust-all-tools');
   assert.ok(!cmd.args.includes('--trust-all-tools'));
-  // Last arg is the composed prompt (rubric inlined + scripts named + base prompt).
+  // Last arg is the composed prompt (rubric inlined + base prompt). It must NOT
+  // hardcode any specific skill's scripts — those are discovered from disk.
   const composed = cmd.args[cmd.args.length - 1];
-  assert.match(composed, /jira\.sh/);
-  assert.match(composed, /gitlab\.sh/);
   assert.match(composed, /KAN-9/);
+  assert.match(composed, /SKILL RUBRIC/);
 });
 
 test('kiro.finalize classifies purely on exit code', () => {
@@ -95,28 +95,30 @@ test('kiro exposes no interpret() (non-streaming harness)', () => {
 });
 
 // --- shared inline-skill helper (kiro + opencode) ----------------------------
-test('inline-skill prompt inlines SKILL.md when present', () => {
+test('inline-skill prompt inlines SKILL.md and discovers the skill\'s own scripts', () => {
   _resetCache();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-'));
   fs.writeFileSync(path.join(dir, 'SKILL.md'), '# RUBRIC SENTINEL 12345');
+  fs.mkdirSync(path.join(dir, 'scripts'));
+  fs.writeFileSync(path.join(dir, 'scripts', 'mytool.sh'), '#!/bin/sh\n');
   try {
     const p = composeInlineSkillPrompt(dir, 'BASE PROMPT SENTINEL');
     assert.match(p, /RUBRIC SENTINEL 12345/);
     assert.match(p, /BASE PROMPT SENTINEL/);
-    assert.match(p, /jira\.sh/);
-    assert.match(p, /gitlab\.sh/);
+    // Discovered generically from disk — not hardcoded to any agent's scripts.
+    assert.match(p, /mytool\.sh/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     _resetCache();
   }
 });
 
-test('inline-skill prompt is still usable when SKILL.md is missing (fail soft)', () => {
+test('inline-skill prompt is still usable when SKILL.md + scripts are absent (fail soft)', () => {
   _resetCache();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-empty-'));
   try {
     const p = composeInlineSkillPrompt(dir, 'BASE');
-    assert.match(p, /jira\.sh/);
+    assert.match(p, /SKILL RUBRIC/);
     assert.match(p, /BASE/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -133,9 +135,10 @@ test('opencode.buildCommand emits `run` + json format + inlined prompt', () => {
   assert.ok(fmtIdx !== -1, 'requests a format');
   assert.strictEqual(cmd.args[fmtIdx + 1], 'json');
   assert.ok(cmd.args.includes('--dangerously-skip-permissions'));
-  // Last arg is the inlined-skill prompt.
+  // Last arg is the inlined-skill prompt (rubric + base prompt; no hardcoded
+  // agent-specific scripts — those are discovered from disk at runtime).
   const composed = cmd.args[cmd.args.length - 1];
-  assert.match(composed, /jira\.sh/);
+  assert.match(composed, /SKILL RUBRIC/);
   assert.match(composed, /KAN-9/);
 });
 

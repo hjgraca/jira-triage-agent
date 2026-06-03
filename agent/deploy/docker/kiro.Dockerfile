@@ -14,4 +14,4 @@ RUN curl -fsSL https://cli.kiro.dev/install | bash \
  && bin="$(find /root/.local/bin -name kiro-cli -type f 2>/dev/null | head -n1)" \
  && [ -n "$bin" ] && install -m 0755 "$bin" /usr/local/bin/kiro-cli \
  && /usr/local/bin/kiro-cli --version
-USER triage
+USER app

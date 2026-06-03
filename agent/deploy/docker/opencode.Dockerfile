@@ -13,4 +13,4 @@ RUN curl -fsSL https://opencode.ai/install | bash \
  && bin="$(find /root/.opencode/bin /root/.local/bin -name opencode -type f 2>/dev/null | head -n1)" \
  && [ -n "$bin" ] && install -m 0755 "$bin" /usr/local/bin/opencode \
  && /usr/local/bin/opencode --version
-USER triage
+USER app

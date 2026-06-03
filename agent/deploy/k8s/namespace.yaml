@@ -1,0 +1,36 @@
+# Namespace + the two ServiceAccounts of the run-as-Job model.
+#
+#   agent-receiver — the thin stateless front door. Needs RBAC to CREATE Jobs
+#                    (see rbac.yaml). No cloud credentials.
+#   agent-runner   — what each one-shot Job runs as. IRSA-bound to the model
+#                    role (e.g. Bedrock) so the harness has model access with no
+#                    static credential. Set the role-arn annotation to YOUR
+#                    Terraform output before applying:
+#                      terraform -chdir=agent/deploy/terraform output -raw triage_bedrock_role_arn
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: triage
+  labels:
+    app.kubernetes.io/name: agent-runner
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-receiver
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: agent-receiver
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runner
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: agent-runner
+  annotations:
+    # IRSA role for the harness's model access (Bedrock for pi). Not needed for
+    # harnesses that authenticate with their own key (kiro/opencode) — those use
+    # a Secret instead; leave a placeholder then.
+    eks.amazonaws.com/role-arn: <RUNNER_IRSA_ROLE_ARN>

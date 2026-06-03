@@ -10,4 +10,4 @@ USER root
 # --ignore-scripts per pi's docs (no install scripts needed; safer locked down).
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent \
  && command -v pi
-USER triage
+USER app

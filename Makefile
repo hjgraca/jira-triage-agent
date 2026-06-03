@@ -83,26 +83,28 @@ triage-image:
 		-t $(TRIAGE_IMAGE) --push agent
 	@echo "Pushed $(TRIAGE_IMAGE) (agent=$(AGENT), harness=$(HARNESS), linux/amd64)"
 
-## Deploy the Jira triage agent. Applies namespace/SA, config, secrets,
-## NetworkPolicy, and the listener (Deployment + dedicated LoadBalancer).
+## Deploy the agent (run-as-Job model). Applies namespace + the two SAs, RBAC +
+## ResourceQuota, NetworkPolicies, config/secrets, and the stateless receiver
+## (Deployment + dedicated LoadBalancer). Run Jobs are created by the receiver.
 ## Prerequisites the operator must do first (see docs/customer-install/):
-##   - `make triage-image` to build/push the image, then set <TRIAGE_IMAGE> in
-##     agent/deploy/k8s/triage-listener.yaml
-##   - set the IRSA role ARN in agent/deploy/k8s/triage-namespace.yaml
+##   - `make triage-image` to build/push the image; set it in receiver.yaml
+##     (and as RUN_IMAGE there)
+##   - set the runner IRSA role ARN in agent/deploy/k8s/namespace.yaml
 ##   - create agent/deploy/k8s/triage-{secrets,config}.yaml from the .example templates
-##   - set AUTHORIZED_ACTORS + JIRA_BASE_URL in agent/deploy/k8s/triage-listener.yaml
+##   - set AUTHORIZED_ACTORS in agent/deploy/k8s/receiver.yaml
 triage:
 	@if [ ! -f agent/deploy/k8s/triage-secrets.yaml ] || [ ! -f agent/deploy/k8s/triage-config.yaml ]; then \
 		echo "Skipping triage: create agent/deploy/k8s/triage-secrets.yaml and agent/deploy/k8s/triage-config.yaml"; \
 		echo "from the .example templates first (see docs/customer-install/). Then: make triage"; \
 	else \
-		kubectl apply -f agent/deploy/k8s/triage-namespace.yaml; \
+		kubectl apply -f agent/deploy/k8s/namespace.yaml; \
+		kubectl apply -f agent/deploy/k8s/rbac.yaml; \
 		kubectl apply -f agent/deploy/k8s/triage-config.yaml; \
 		kubectl apply -f agent/deploy/k8s/triage-secrets.yaml; \
-		kubectl apply -f agent/deploy/k8s/triage-netpol.yaml; \
-		kubectl apply -f agent/deploy/k8s/triage-listener.yaml; \
-		echo "Triage listener applied. Get its LB hostname for CloudFront:"; \
-		echo "  kubectl get svc -n triage triage-listener -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"; \
+		kubectl apply -f agent/deploy/k8s/netpol.yaml; \
+		kubectl apply -f agent/deploy/k8s/receiver.yaml; \
+		echo "Receiver applied. Get its LB hostname for CloudFront:"; \
+		echo "  kubectl get svc -n triage agent-receiver -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"; \
 	fi
 
 up: cluster kubeconfig apps

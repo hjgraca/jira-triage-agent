@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { splitFrontmatter } = require('../listener/agent-def');
+const { splitFrontmatter } = require('../lib/agent-def');
 
 // Cache the rubric BODY per skillPath so we read it once, not per webhook. The
 // body is SKILL.md with its YAML frontmatter stripped — the frontmatter is the
@@ -31,20 +31,37 @@ function loadRubric(skillPath) {
   return rubric;
 }
 
+// List the agent's bundled tool scripts (scripts/*.sh), if any. Agnostic: we
+// don't know or care what they do — we just point the model at them.
+function listScripts(skillPath) {
+  const dir = path.join(skillPath, 'scripts');
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.sh'))
+      .sort()
+      .map((f) => path.join(dir, f));
+  } catch {
+    return [];
+  }
+}
+
 /**
- * Build a self-contained prompt for a skill-less harness: the rubric text, the
- * scripts to use for all Jira/GitLab access, and the base triage prompt naming
- * the one issue to act on.
+ * Build a self-contained prompt for a skill-less harness (no `--skill` flag):
+ * its rubric body, a generic instruction to use whatever bundled scripts the
+ * skill ships as its tools, and the agent's own base prompt. Nothing here names
+ * Jira/triage/pi — the rubric and scripts are the agent's, discovered from disk.
  */
 function composeInlineSkillPrompt(skillPath, basePrompt) {
   const rubric = loadRubric(skillPath);
-  const scripts = path.join(skillPath, 'scripts');
+  const scripts = listScripts(skillPath);
+  const toolLine = scripts.length
+    ? `Use ONLY these bundled scripts as your tools (run them via the shell): ${scripts.join(', ')}. Prefer them over calling any API directly — they enforce the skill's auth and allowed-value bounds.`
+    : 'Use the tools available to you as directed by the rubric.';
   return [
-    'You are running the jira-triage skill headlessly. Follow the rubric below',
-    'exactly. Use ONLY these bundled scripts for all Jira/GitLab access (run them',
-    `via the shell): ${scripts}/jira.sh and ${scripts}/gitlab.sh. Do not call the`,
-    'Jira or GitLab APIs directly — the scripts enforce auth and allowed-value',
-    'bounds. When finished, stop.',
+    'You are running a skill headlessly. Follow the rubric below exactly.',
+    toolLine,
+    'When finished, stop.',
     '',
     '----- BEGIN SKILL RUBRIC (SKILL.md) -----',
     rubric,

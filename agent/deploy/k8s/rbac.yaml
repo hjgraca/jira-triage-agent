@@ -1,0 +1,49 @@
+# RBAC for the receiver to create one-shot run Jobs, and nothing more.
+#
+# The receiver's only cluster privilege is "create/get Jobs in this namespace" —
+# it does not read secrets, exec pods, or touch anything else. Job creation is
+# how it dispatches a run; `get` lets the k8s-job dispatcher treat a 409
+# AlreadyExists (duplicate delivery) cleanly. Least privilege: a compromised
+# receiver can start runs (already bounded by the ResourceQuota), not roam.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-receiver-jobs
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: agent-receiver
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-receiver-jobs
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: agent-receiver
+subjects:
+  - kind: ServiceAccount
+    name: agent-receiver
+    namespace: triage
+roleRef:
+  kind: Role
+  name: agent-receiver-jobs
+  apiGroup: rbac.authorization.k8s.io
+---
+# Concurrency limit (replaces the old in-memory semaphore). Caps how many run
+# pods can exist at once; excess Jobs queue until slots free. Tune to your model
+# spend tolerance — this is the in-cluster half of cost control (the other half
+# is provider-side, e.g. AWS Budgets / Bedrock quotas).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: agent-run-concurrency
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: agent-runner
+spec:
+  hard:
+    count/jobs.batch: "20"   # max concurrent (+ recently-finished, pre-TTL) run Jobs

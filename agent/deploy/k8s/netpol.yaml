@@ -1,0 +1,70 @@
+# NetworkPolicies (defense-in-depth) for the two pod kinds. The threat model
+# split with the run-as-Job model:
+#   - the RECEIVER is thin and only creates Jobs — it needs webhook ingress and
+#     egress to the K8s API + DNS, nothing else.
+#   - the RUNNER Job is what runs the LLM with a bash tool over attacker-
+#     controlled ticket text — it is the exfiltration risk, so its egress is the
+#     one that must be fenced (DNS, in-cluster GitLab, HTTPS to model/Jira).
+#
+# CAVEAT: with the AWS VPC CNI these are enforced only when the network-policy
+# controller is enabled (ENABLE_NETWORK_POLICY=true on aws-node). If not, they
+# are inert and the LB security group (R10b) is the sole network control.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-receiver-isolation
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: agent-receiver
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-receiver
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Webhook traffic DNAT'd by the LoadBalancer arrives from the node/VPC range.
+    - from:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    # DNS
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # HTTPS to the in-cluster Kubernetes API server (to create run Jobs).
+    - ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-run-egress
+  namespace: triage
+  labels:
+    app.kubernetes.io/name: agent-run
+spec:
+  # Applies to the one-shot run pods (the dispatcher labels Jobs/pods with this).
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-run
+  policyTypes: [Egress]
+  egress:
+    # DNS
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # In-cluster GitLab API (e.g. gitlab-webservice-default.gitlab.svc)
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/16 }
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 80 }
+    # HTTPS to the model provider (Bedrock) + Jira. Narrow to provider CIDRs or
+    # route via a VPC endpoint / egress proxy for a hard exfil boundary.
+    - ports:
+        - { protocol: TCP, port: 443 }

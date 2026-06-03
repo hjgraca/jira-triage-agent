@@ -15,52 +15,76 @@ what surrounds it differs.
 
 ---
 
-## The runner is generic: trigger × agent × harness
+## Runtime model: receiver → one-shot run Job
 
-The listener is **not** triage-specific. It's a generic runner composed of three
-independently-pluggable pieces, so you change behavior by configuration, not code:
+There is **no long-lived stateful listener**. Two roles, both from the same image:
 
 ```
-   TRIGGER                 AGENT (the skill)              HARNESS
-   how an event is         what the agent IS:             which coding-agent
-   authenticated,          its prompt + rubric +          CLI actually runs
-   parsed into vars,       tools, declared in             the prompt
-   and gated               SKILL.md frontmatter
-   ───────────             ──────────────────             ──────────────
-   jira (default)          jira-triage (default)          pi (default)
-   generic                 <your skill dir>               kiro-cli
-   <your adapter>                                         opencode
-                                                          <your adapter>
+  Jira / any source
+        │  webhook
+        ▼
+  ┌─────────────┐   creates a        ┌──────────────────────────┐
+  │  RECEIVER   │   one-shot Job ──▶  │  RUN (Kubernetes Job)     │
+  │ (stateless, │                     │  node runtime/runner      │
+  │  N replicas)│                     │  = agent-def + harness,   │
+  │ auth→gate→  │                     │    runs once, exits        │
+  │  dispatch   │                     └──────────────────────────┘
+  └─────────────┘
+```
+
+- The **receiver** holds **no per-event state** — no dedupe cache, no concurrency
+  semaphore, no daily counter, and (now) **no Jira `/myself` call**. It authenticates,
+  gates, creates a Job, and acks. Being stateless, it scales to N replicas.
+- **Kubernetes is the dedupe store + concurrency limiter** (what the old in-memory
+  listener did): the Job is named deterministically from the delivery id, so a
+  duplicate delivery collides with `409 AlreadyExists`; a namespace `ResourceQuota`
+  caps concurrent run pods. (Dev/workshop can use `DISPATCH=exec`, which spawns the
+  runner as a subprocess and keeps dedupe+limit in-memory — single-process only.)
+- The **runner** is the one-shot program a Job executes: load the agent definition,
+  build the harness command, run it once, exit with a code reflecting success.
+
+## Four pluggable axes — the engine is agnostic
+
+You change behavior by configuration, not code. The engine (`runtime/receiver`,
+`runtime/runner`, `runtime/lib`) contains **no** Jira/pi/triage specifics — each
+lives in its adapter:
+
+```
+   TRIGGER          AGENT (the skill)        HARNESS              DISPATCH
+   how an event     what the agent IS:       which coding-agent   how a run
+   is authed,       prompt + rubric +        CLI runs the prompt  starts
+   parsed, gated    tools in SKILL.md
+   ───────────      ──────────────────       ──────────────       ──────────
+   jira (default)   jira-triage (default)    pi (default)         k8s-job (default)
+   generic          <your skill dir>         kiro-cli             exec
+   <your adapter>                            opencode
 ```
 
 - **The skill drives the agent.** `SKILL.md`'s YAML frontmatter (`prompt`,
   `loopMarker`, `authorizedActors`, `trustTools`, `model`) IS the agent
-  definition — see [agent-def.js](../../agent/runtime/listener/agent-def.js). Point
-  `AGENT_PATH` at a different skill → a different agent, no code change. The
-  prompt is a template; `{{vars}}` are filled from the trigger.
-- **The trigger feeds it.** `TRIGGER` selects how the webhook is authenticated,
-  parsed into prompt vars, and gated. `jira` carries the Jira eligibility / loop
-  guard / actor-allowlist logic; `generic` is a signed-POST passthrough for
-  non-Jira sources.
-- **The harness runs it.** `HARNESS` selects the coding-agent CLI.
-
-The runner core (auth, dedupe, spend limiter, watchdog, ack-fast lifecycle) is
-the same regardless of the three choices.
+  definition — see [agent-def.js](../../agent/runtime/lib/agent-def.js). Point
+  `AGENT_PATH` at a different skill → a different agent, no code change.
+- **The trigger feeds it** (`TRIGGER`). `jira` carries all Jira eligibility / loop
+  guard / actor-allowlist logic and reads its own bot accountId from
+  `JIRA_BOT_ACCOUNT_ID` — the engine makes no Jira API call. `generic` is a
+  signed-POST passthrough.
+- **The harness runs it** (`HARNESS`).
+- **The dispatch starts it** (`DISPATCH`): `k8s-job` (production) or `exec` (dev).
 
 ## Components
 
 | Component | Path | Role |
 |---|---|---|
-| **Listener (HTTP shell)** | `agent/runtime/listener/server.js` | Generic I/O shell + startup. Per request: `trigger.authenticate` → parse → dedupe → `trigger.decide` (gate) → spend limiter → ack fast → `spawnRun`. Zero third-party deps. |
-| **Runner (run lifecycle)** | `agent/runtime/listener/runner.js` | The per-run invariants in one place: render prompt → spawn harness child → watchdog kill → release the limiter slot exactly once → stream-parse/classify → evict dedupe id on spawn failure. `createRunner(deps)` is what `server.js` calls. |
-| **Auth** | `agent/runtime/listener/auth.js` | Constant-time HMAC + shared-secret verification (trigger-agnostic). |
-| **Agent definition** | `agent/runtime/listener/agent-def.js` + a skill's `SKILL.md` frontmatter | Parses the skill's frontmatter into `{ prompt, loopMarker, authorizedActors, trustTools, model, body }` and renders the prompt template. The skill, not the code, defines the agent. |
-| **Trigger adapters** | `agent/runtime/trigger/` | `index.js` registry (`TRIGGER` env, default `jira`); `jira.js` (webhook/Automation auth + eligibility + loop guard + authz); `generic.js` (signed-POST passthrough). Add an event source with one file. |
+| **Receiver** | `agent/runtime/receiver/server.js` | Thin, stateless HTTP front door + startup. Per request: `trigger.authenticate` → parse → `trigger.decide` (gate) → `dispatch` one run → ack. No per-event state. Zero third-party deps. |
+| **Runner** | `agent/runtime/runner/main.js` | The one-shot program a run executes (a Job, or an exec subprocess): load agent-def → build harness command → run once → exit with a code reflecting tool success. |
+| **Dispatch adapters** | `agent/runtime/dispatch/` | `index.js` registry (`DISPATCH` env, default `k8s-job`); `k8s-job.js` (create a Job per event — K8s provides dedupe via deterministic name + concurrency via ResourceQuota); `exec.js` (subprocess, in-memory dedupe+limit for dev). |
+| **Shared lib** | `agent/runtime/lib/` | `agent-def.js` (parse SKILL.md frontmatter + render prompt), `auth.js` (constant-time HMAC + shared-secret), `limits.js` (dedupe + limiter, used only by exec dispatch). Agnostic. |
+| **Trigger adapters** | `agent/runtime/trigger/` | `index.js` registry (`TRIGGER` env, default `jira`); `jira.js` (webhook/Automation auth + eligibility + loop guard + authz + `JIRA_BOT_ACCOUNT_ID`); `generic.js` (signed-POST passthrough). Add an event source with one file. |
 | **Skill / agent** | `agent/agents/jira-triage/` | The default agent: `SKILL.md` (frontmatter + triage rubric + trust boundary), bundled scripts `jira.sh` / `gitlab.sh`, and its own `Dockerfile`. One dir per agent. |
-| **Harness adapters** | `agent/runtime/harness/` | Pluggable coding-agent CLIs (`HARNESS` env; default `pi`; `kiro-cli` + `opencode` built in). Each owns argv + result-reading. Skill-less harnesses share `inline-skill.js`. Contract is subprocess-shaped (spawn-per-ticket) — see the [harness README](../../agent/runtime/harness/README.md). |
-| **Image** | `agent/deploy/docker/` + `agent/agents/<name>/Dockerfile` | Three agent-blank-until-last layers: `base.Dockerfile` (engine only) → `<harness>.Dockerfile` (+ CLI) → the agent's own Dockerfile (+ one agent). `make triage-image AGENT=<name> HARNESS=<name>`. |
-| **Manifests** | `agent/deploy/k8s/` | Namespace + IRSA ServiceAccount, listener Deployment + dedicated LoadBalancer, NetworkPolicy (ingress + egress allowlist), ConfigMap/Secret. |
-| **Cloud deps** | `agent/deploy/terraform/` | Bedrock IRSA role (scoped to one model) + optional CloudFront for a domain-free HTTPS webhook endpoint. |
+| **Harness adapters** | `agent/runtime/harness/` | Pluggable coding-agent CLIs (`HARNESS` env; default `pi`; `kiro-cli` + `opencode` built in). Each owns argv + result-reading. Skill-less harnesses share `inline-skill.js`. |
+| **Image** | `agent/deploy/docker/` + `agent/agents/<name>/Dockerfile` | Three agent-blank-until-last layers: `base.Dockerfile` (engine only) → `<harness>.Dockerfile` (+ CLI) → the agent's own Dockerfile (+ one agent). Same image is both receiver and runner. `make triage-image AGENT=<name> HARNESS=<name>`. |
+| **Manifests** | `agent/deploy/k8s/` | `namespace.yaml` (receiver + runner SAs), `rbac.yaml` (receiver→create Jobs + ResourceQuota), `receiver.yaml` (Deployment + LB), `netpol.yaml` (receiver + run-pod policies), config/secrets. |
+| **Cloud deps** | `agent/deploy/terraform/` | Runner IRSA role (model access, scoped to one model) + optional CloudFront for a domain-free HTTPS webhook endpoint. |
 
 ---
 
@@ -161,12 +185,14 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
   (`interpret`); non-streaming ones classify from the exit code (`finalize`).
   Harnesses without a skill-loader (kiro-cli) get the rubric inlined into the
   prompt. This is what makes it plug-and-play for customers.
-- **Single replica, in-memory state.** Dedupe and the spend limiter are per-pod
-  and in-memory, so the Deployment is pinned to `replicas: 1` with a `Recreate`
-  strategy (two pods would each dedupe/limit independently). Scaling out requires
-  moving that state to a shared store first.
-- **Ack fast, work async.** The listener returns `200` before spawning `pi`, so
-  Jira's webhook never times out waiting on a model run.
+- **Stateless receiver, K8s as the state store.** The receiver holds no dedupe
+  cache or limiter, so it scales to N replicas freely. Dedupe (deterministic Job
+  name → 409) and concurrency (ResourceQuota) live in Kubernetes. The `exec`
+  dispatcher keeps them in-memory and is therefore single-process — for dev only.
+- **Ack fast, work async.** The receiver returns `200` after creating the Job
+  (not after the run finishes), so the webhook never times out on a model run.
+  Each run is its own pod — OOM-bounded, retried via `backoffLimit`, auto-cleaned
+  via `ttlSecondsAfterFinished`.
 - **No domain required.** CloudFront's default `*.cloudfront.net` cert gives a
   valid-TLS public endpoint with no domain purchase; TLS terminates at CloudFront
   and the origin hop is plain HTTP inside the VPC. Customers who already have a
