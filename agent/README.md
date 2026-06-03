@@ -4,9 +4,10 @@ The **complete, self-contained unit** deployed into a Kubernetes cluster.
 Nothing under `workshop/` is required to run it. It's organized as three concerns:
 
 ```
-runtime/                 THE ENGINE — generic trigger × agent × harness runner
-  listener/              server.js (HTTP + gate wiring) + runner.js (run lifecycle)
-                         + agent-def.js + auth.js + limits.js
+runtime/                 THE ENGINE — trigger × agent × harness
+  receiver.js            stateless webhook front: auth → decide → create one Job → ack
+  run.js                 one-shot Job entrypoint: render prompt → spawn harness → exit
+  lib/                   auth.js, agent-def.js, job.js (manifest), k8s.js (createJob)
   trigger/               trigger adapters (jira, generic, + your own)
   harness/               harness adapters (pi, kiro-cli, opencode, + your own)
   test/                  node:test suite  (run: cd runtime && node --test)
@@ -18,7 +19,8 @@ agents/                  THE IMPLEMENTATIONS — one dir per agent, each with it
 
 deploy/                  HOW IT SHIPS
   docker/                base.Dockerfile (engine) + pi/kiro/opencode (harness bases)
-  k8s/                   namespace/SA, listener Deployment+LB, NetworkPolicy, config/secret
+  k8s/                   namespace + 2 SAs, rbac, resourcequota, netpol,
+                         receiver Deployment+Service, config/secret
   terraform/             standalone IRSA + optional CloudFront for an EXISTING cluster
 ```
 

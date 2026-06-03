@@ -119,11 +119,25 @@ warm-up). `make agent-deploy` runs this whole sequence.
 
 ## Step 5 — Expose the receiver (CloudFront or your own ALB)
 
-Jira needs a public HTTPS URL that reaches the `agent-receiver` Service. Either
-front it with CloudFront (domain-free, from `agent/deploy/terraform`) or your own
-ALB + domain + TLS. Lock the origin so only your front door can reach the
-Service (CloudFront origin CIDRs / your ALB security group). The webhook URL you
-register in Jira is `https://<front-door>/webhook`.
+`receiver.yaml` creates the `agent-receiver` Service as a **LoadBalancer locked
+to CloudFront's origin CIDRs** (R10b) — so it's reachable only through CloudFront,
+which `agent/deploy/terraform` provisions as its origin:
+
+```bash
+LB=$(kubectl -n agents get svc agent-receiver \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+cd agent/deploy/terraform
+terraform apply -var "listener_lb_dns=$LB"
+terraform output -raw triage_webhook_url          # → the /jira-webhook URL for Jira
+terraform output -json cloudfront_origin_cidrs    # → keep loadBalancerSourceRanges current
+```
+
+Prefer your **own ALB + domain + TLS**? Change the Service to `ClusterIP`, point
+the ALB at it, and lock the origin with the ALB security group / WAF instead. The
+webhook URL you register in Jira is then `https://<your-domain>/webhook`.
+
+> **Verify the lock:** a direct request to the LB hostname (bypassing CloudFront)
+> must be refused.
 
 ## Step 6 — Register the trigger in Jira
 
