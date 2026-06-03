@@ -27,7 +27,10 @@
 #   NS                 k8s namespace            (default: agents)
 #   WEBHOOK_URL        CloudFront webhook URL    (default: terraform output)
 #   TF_DIR             terraform dir for outputs (default: workshop/terraform)
-#   E2E_ISSUE_KEY      throwaway Jira issue key  (default: KAN-2)
+#   E2E_ISSUE_KEY      pin a fixed issue key     (default: empty → create a fresh
+#                      ticket each run; setting this disables creation)
+#   E2E_PROJECT        project to create in      (default: KAN)
+#   E2E_CREATE_TICKET  1=create fresh (default), 0=reuse E2E_ISSUE_KEY
 #   E2E_ACTOR_ID       an AUTHORIZED_ACTORS id   (default: from receiver env)
 #   WAIT_RUN           seconds to await the run  (default: 300; 0 = don't wait)
 set -uo pipefail
@@ -35,7 +38,9 @@ set -uo pipefail
 # --- knobs -------------------------------------------------------------------
 NS="${NS:-agents}"
 TF_DIR="${TF_DIR:-workshop/terraform}"
-E2E_ISSUE_KEY="${E2E_ISSUE_KEY:-KAN-2}"
+# E2E_ISSUE_KEY is intentionally NOT defaulted — empty means "create a fresh
+# ticket each run" (the default behavior). Set it to pin a fixed ticket.
+E2E_ISSUE_KEY="${E2E_ISSUE_KEY:-}"
 WAIT_RUN="${WAIT_RUN:-300}"
 STEP=0
 [ "${1:-}" = "--step" ] && STEP=1
@@ -83,6 +88,35 @@ if [ -z "${E2E_ACTOR_ID:-}" ]; then
 fi
 [ -n "$HMAC$SHARED" ] || die "no auth secret found in $NS/agent-secrets (need WEBHOOK_HMAC_SECRET or AUTOMATION_SHARED_SECRET)"
 
+# Jira creds (from the same secret) + base URL — used to CREATE a fresh test
+# ticket each run and to verify the audit comment landed on it. Read-only except
+# the deliberate create. JIRA_BASE_URL isn't a secret; take it from RUN_ENV/env
+# or fall back to the bot email's site is not reliable, so require it explicitly.
+JIRA_EMAIL="$(sec JIRA_EMAIL)"
+JIRA_API_TOKEN="$(sec JIRA_API_TOKEN)"
+JIRA_BASE_URL="${JIRA_BASE_URL:-$(kubectl -n "$NS" get deploy agent-receiver \
+  -o jsonpath='{range .spec.template.spec.containers[0].env[?(@.name=="RUN_ENV")]}{.value}{end}' 2>/dev/null \
+  | tr ',' '\n' | sed -n 's/^JIRA_BASE_URL=//p')}"
+JIRA_BASE_URL="${JIRA_BASE_URL:-https://henriquegraca.atlassian.net}"
+E2E_PROJECT="${E2E_PROJECT:-KAN}"
+# Create a fresh ticket per run by default; set E2E_CREATE_TICKET=0 to reuse a
+# fixed E2E_ISSUE_KEY, or pre-set E2E_ISSUE_KEY to pin one.
+E2E_CREATE_TICKET="${E2E_CREATE_TICKET:-1}"
+[ -n "${E2E_ISSUE_KEY:-}" ] && E2E_CREATE_TICKET=0   # an explicit key disables creation
+
+_jauth() { printf '%s:%s' "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 | tr -d '\n'; }
+jira_api() { # METHOD PATH [JSON_BODY]
+  local m="$1" p="$2" b="${3:-}"
+  if [ -n "$b" ]; then
+    curl -sS -m 25 -X "$m" -H "Authorization: Basic $(_jauth)" \
+      -H 'Content-Type: application/json' -H 'Accept: application/json' \
+      --data "$b" "${JIRA_BASE_URL%/}$p" 2>/dev/null
+  else
+    curl -sS -m 25 -X "$m" -H "Authorization: Basic $(_jauth)" \
+      -H 'Accept: application/json' "${JIRA_BASE_URL%/}$p" 2>/dev/null
+  fi
+}
+
 # Deterministic Job name = sha256(deliveryId)[:16], prefixed by the agent name —
 # this MUST match runtime/lib/job.js, and IS the dedupe key.
 jobname() { printf 'jira-triage-%s' "$(printf '%s' "$1" | openssl dgst -sha256 | awk '{print substr($NF,1,16)}')"; }
@@ -93,10 +127,39 @@ hcode() { local c; c=$(curl -sS -m "${2:-20}" -o /dev/null -w '%{http_code}' "$1
 say "${B}Jira triage agent — live end-to-end test${Z}"
 say "  webhook URL : $WEBHOOK_URL"
 say "  namespace   : $NS"
-say "  test issue  : $E2E_ISSUE_KEY   (writes go here — use a throwaway ticket)"
+say "  ticket      : $([ "$E2E_CREATE_TICKET" = 1 ] && echo "fresh $E2E_PROJECT ticket created per run" || echo "${E2E_ISSUE_KEY:-?} (fixed)")"
 say "  actor id    : ${E2E_ACTOR_ID:-<none found>}"
 say "  auth        : HMAC=$([ -n "$HMAC" ] && echo yes || echo no)  shared-secret=$([ -n "$SHARED" ] && echo yes || echo no)"
 [ "$STEP" = 1 ] && say "  mode        : ${Y}step-by-step${Z}"
+
+# =============================================================================
+stage 0 "Create a fresh test ticket" \
+"Creates a NEW $E2E_PROJECT ticket via the Jira API (using the bot creds) so each
+run triages a brand-new issue — you see fresh tickets and comments every time.
+Its key flows into every downstream stage. (Set E2E_ISSUE_KEY to pin a fixed
+ticket, or E2E_CREATE_TICKET=0 to reuse one.)"
+if [ "$E2E_CREATE_TICKET" = 1 ]; then
+  [ -n "$JIRA_EMAIL$JIRA_API_TOKEN" ] || die "can't create a ticket: no JIRA_EMAIL/JIRA_API_TOKEN in $NS/agent-secrets"
+  # A realistic, triage-worthy bug so the agent has something to classify.
+  n="$(jobs_count)"
+  summ="E2E test: login 500 on email with plus sign (run $$-$n)"
+  desc="Synthetic ticket created by the e2e test. Steps: register a user whose email contains a + sign, then attempt login -> HTTP 500. Likely the auth handler does not URL-decode the email before lookup. Safe to triage and close."
+  body=$(printf '{"fields":{"project":{"key":"%s"},"summary":"%s","issuetype":{"name":"Task"},"description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"%s"}]}]}}}' \
+    "$E2E_PROJECT" "$summ" "$desc")
+  resp="$(jira_api POST /rest/api/3/issue "$body")"
+  E2E_ISSUE_KEY="$(printf '%s' "$resp" | jq -r '.key // empty' 2>/dev/null)"
+  if [ -n "$E2E_ISSUE_KEY" ]; then
+    ok "created $E2E_ISSUE_KEY  ($JIRA_BASE_URL/browse/$E2E_ISSUE_KEY)"
+    say "      summary: $summ"
+  else
+    bad "ticket create failed: $(printf '%s' "$resp" | jq -rc '.errors // .errorMessages // .' 2>/dev/null | head -c 300)"
+    die "cannot continue without a test ticket (check the bot's create permission in $E2E_PROJECT)"
+  fi
+else
+  [ -n "${E2E_ISSUE_KEY:-}" ] || die "E2E_CREATE_TICKET=0 but no E2E_ISSUE_KEY set"
+  say "    reusing fixed ticket $E2E_ISSUE_KEY (no creation)"
+  ok "using existing ticket $E2E_ISSUE_KEY"
+fi
 
 # =============================================================================
 stage 1 "Receiver health through CloudFront" \
@@ -214,15 +277,29 @@ fi
 
 # =============================================================================
 stage 8 "Run completes and triages the ticket" \
-"Waits for the stage-5 Job to finish and shows the run's verdict tail (it posts
-an audit comment to the real Jira issue). Set WAIT_RUN=0 to skip the wait."
+"Waits for the stage-5 Job to finish, then VERIFIES against real Jira that a new
+audit comment landed on $E2E_ISSUE_KEY (comment count grew and the newest is the
+bot's AI-triage disclaimer). Set WAIT_RUN=0 to skip the wait."
+# Comment count BEFORE the run (the agent should add exactly one).
+comments_before="$(jira_api GET "/rest/api/3/issue/$E2E_ISSUE_KEY/comment" | jq -r '.total // 0' 2>/dev/null)"
 if [ "$WAIT_RUN" = 0 ]; then
   say "    ${Y}skip${Z}: WAIT_RUN=0 (Job '$EXPECT_JOB' left running)"
 elif kubectl -n "$NS" get job "$EXPECT_JOB" >/dev/null 2>&1; then
   say "    waiting up to ${WAIT_RUN}s for $EXPECT_JOB to complete …"
   if kubectl -n "$NS" wait --for=condition=complete "job/$EXPECT_JOB" --timeout="${WAIT_RUN}s" >/dev/null 2>&1; then
     ok "run Job completed"
-    say "    ${C}verdict tail:${Z}"
+    # Ground truth: did a fresh audit comment appear on the ticket in real Jira?
+    newest="$(jira_api GET "/rest/api/3/issue/$E2E_ISSUE_KEY/comment?orderBy=-created")"
+    comments_after="$(printf '%s' "$newest" | jq -r '.total // 0' 2>/dev/null)"
+    head="$(printf '%s' "$newest" | jq -r '.comments[-1].body.content[0].content[0].text // ""' 2>/dev/null)"
+    say "    comments on $E2E_ISSUE_KEY: $comments_before → $comments_after"
+    if [ "${comments_after:-0}" -gt "${comments_before:-0}" ] && printf '%s' "$head" | grep -q "generated by AI during triage"; then
+      ok "audit comment posted to $E2E_ISSUE_KEY in real Jira"
+      say "      $JIRA_BASE_URL/browse/$E2E_ISSUE_KEY"
+    else
+      bad "no new audit comment on $E2E_ISSUE_KEY (before=$comments_before after=$comments_after head='${head:0:40}')"
+    fi
+    say "    ${C}verdict tail (run log):${Z}"
     kubectl -n "$NS" logs "job/$EXPECT_JOB" --tail=200 2>/dev/null \
       | grep -oE '"text":"[^"]*(category|triaged|Summary|✅)[^"]*"' | tail -3 | sed 's/^/      /' \
       || kubectl -n "$NS" logs "job/$EXPECT_JOB" --tail=5 2>/dev/null | sed 's/^/      /'

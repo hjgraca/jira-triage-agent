@@ -28,6 +28,7 @@ app.kubernetes.io/name=agent-receiver -f`) or watch Jobs
 
 | # | Stage | Asserts |
 |---|-------|---------|
+| 0 | Create ticket | creates a **fresh** Jira ticket each run (so you see new tickets + comments every time) |
 | 1 | Health through CloudFront | `GET /healthz`+`/readyz` = 200 → CF → NLB → receiver is up |
 | 2 | Origin lock | a direct hit to the NLB (bypassing CloudFront) is refused |
 | 3 | Auth | a bad-signature webhook is rejected `401` (auth runs before parse/gate) |
@@ -35,7 +36,7 @@ app.kubernetes.io/name=agent-receiver -f`) or watch Jobs
 | 5 | Spawn | a real `automation:label-added` event creates exactly one run Job |
 | 6 | Dedupe | re-sending the same delivery id creates **no** second Job (409) |
 | 7 | Concurrency quota | the ResourceQuota uses the non-terminal `pods` key, not `count/pods` |
-| 8 | Run completes | the Job finishes and triages the ticket (posts an audit comment) |
+| 8 | Run completes | the Job finishes and a fresh audit comment lands on the new ticket **in real Jira** (comment count grew) |
 
 ## Configuration
 
@@ -46,20 +47,30 @@ All optional — defaults are auto-discovered from terraform + the cluster:
 | `WEBHOOK_URL` | `terraform output triage_webhook_url` | the CloudFront webhook URL to drive |
 | `TF_DIR` | `workshop/terraform` | terraform dir to read the URL output from |
 | `NS` | `agents` | the agent namespace |
-| `E2E_ISSUE_KEY` | `KAN-2` | **throwaway** Jira issue the runs triage (writes land here) |
+| `E2E_ISSUE_KEY` | *(empty)* | empty → **create a fresh ticket each run** (default). Set it to pin/reuse a fixed ticket. |
+| `E2E_PROJECT` | `KAN` | project to create the fresh ticket in |
+| `E2E_CREATE_TICKET` | `1` | `1` create fresh (default), `0` reuse `E2E_ISSUE_KEY` |
 | `E2E_ACTOR_ID` | first `AUTHORIZED_ACTORS` id on the receiver | the authorized triggering actor |
+| `JIRA_BASE_URL` | from the receiver's `RUN_ENV` | Jira site for create + verify |
 | `WAIT_RUN` | `300` | seconds to wait for the run in stage 8 (`0` = don't wait) |
 
-The auth secrets and the actor id are read **read-only** from the live
-deployment (`agents/agent-secrets`, the receiver env) so the synthetic webhooks
-are valid against it — nothing is hardcoded.
+By default each run **creates a new ticket** (stage 0) so you always get fresh
+tickets and comments. The Jira creds, auth secrets, and the actor id are read
+**read-only** from the live deployment (`agents/agent-secrets`, the receiver env)
+so the create + signed webhooks are valid against it — nothing is hardcoded.
+
+To repeatedly hit one ticket instead: `E2E_ISSUE_KEY=KAN-2 make agent-e2e`.
 
 ## Safety
 
 Read-mostly against the cluster and Jira. The only writes are:
 
-- POSTing synthetic webhooks to the receiver, which spawn run Jobs that triage
-  **`$E2E_ISSUE_KEY`** — point it at a throwaway ticket, not a real one.
+- Creating a fresh synthetic ticket in `E2E_PROJECT` (a self-labelled "E2E test"
+  Task) — and the triage run then comments/labels **that** ticket. Runs against
+  a throwaway project; the tickets are clearly marked and safe to bulk-close.
+- POSTing synthetic webhooks to the receiver, which spawn the run Job.
 - Deleting the run Job the test created, during cleanup.
 
-It never edits the manifests, the terraform, or any cluster config.
+It never edits the manifests, the terraform, or any cluster config. (It does not
+delete the test tickets — they accumulate in the project as a visible run log;
+clean them up in Jira when you like.)
