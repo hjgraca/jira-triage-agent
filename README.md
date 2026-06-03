@@ -8,20 +8,22 @@ and the relevant GitLab source, classifies it (category / state / severity), set
 fields within an allow-listed set, posts an audit comment, and — for multi-repo
 features — proposes a work split across teams.
 
-Under the hood the listener is a **generic runner** composed of three pluggable
-pieces — **trigger × agent × harness**:
+Under the hood: a thin, stateless **receiver** authenticates + gates each webhook
+and creates **one Kubernetes Job per event** (Kubernetes provides dedupe,
+concurrency, timeout, retry — no long-lived stateful runner). The engine is
+**trigger × agent × harness**, all pluggable:
 
 - **trigger** — how an event is authenticated, parsed, and gated (`jira` webhook,
   or a `generic` signed POST).
 - **agent** — *what the agent is*, defined by the **skill's `SKILL.md`
-  frontmatter** (its prompt, rubric, tools). Point at a different skill → a
+  frontmatter** (its prompt, rubric, tools). Point at a different agent dir → a
   different agent, no code change. See [authoring agents](docs/customer-install/07-authoring-agents.md).
 - **harness** — the coding-agent CLI that runs it:
   [pi.dev](https://github.com/earendil-works/pi) (Bedrock via IRSA),
   [kiro-cli](https://kiro.dev), or [opencode](https://opencode.ai), or bring your
   own (see [harness adapters](agent/runtime/harness/README.md)).
 
-It runs headless in Kubernetes with the same guardrails regardless of the three choices.
+See [Architecture](docs/architecture/) for the runtime model and trust diagram.
 
 ---
 
@@ -31,7 +33,7 @@ This repo serves two distinct purposes. Pick the one you're here for:
 
 | You want to… | Go to | What it covers |
 |---|---|---|
-| **Install the agent** into an existing cluster (a customer's, or your own) | **[docs/customer-install/](docs/customer-install/)** | The shippable unit only: `agent/` (listener + skill + image + manifests) and `agent/deploy/terraform` (IRSA + optional CloudFront) against a cluster you already run. |
+| **Install the agent** into an existing cluster (a customer's, or your own) | **[docs/customer-install/](docs/customer-install/)** | The shippable unit only: `agent/` (engine + skill + image + manifests) and `agent/deploy/terraform` (IRSA + optional CloudFront) against a cluster you already run. |
 | **Stand up the full lab** (EKS + self-hosted GitLab + the agent) to develop or demo | **[docs/workshop/](docs/workshop/)** | The whole environment: `workshop/terraform` (VPC + EKS), GitLab via Helm, then the agent on top. Driven by the `Makefile`. |
 | **Understand how it works** | **[docs/architecture/](docs/architecture/)** | Topology and request-flow diagrams for both the workshop and the customer (agent-only) deployments, plus the trust/security model. |
 
@@ -46,11 +48,12 @@ This repo serves two distinct purposes. Pick the one you're here for:
 
 ```
 agent/                      THE SHIPPABLE UNIT — deploy this into any EKS cluster
-  listener/                 Webhook listener (Node, zero deps) that gates + spawns runs
-  skills/jira-triage/       pi.dev skill: triage rubric (SKILL.md) + jira.sh / gitlab.sh
-  docker/triage/Dockerfile  Container image (listener + pi + skill)
-  k8s/                      Namespace/SA, listener Deployment+LB, NetworkPolicy, config/secrets
-  terraform/                Standalone IRSA + optional CloudFront for a customer's cluster
+  runtime/                  Engine (Node, zero deps): receiver.js + run.js + lib/
+                            + trigger/ + harness/ (the two entrypoints + adapters)
+  agents/jira-triage/       One agent: SKILL.md (def + rubric) + jira.sh/gitlab.sh + Dockerfile
+  deploy/docker/            base + per-harness Dockerfiles (engine → CLI → agent)
+  deploy/k8s/               receiver Deployment, RBAC, ResourceQuota, NetworkPolicy, config/secret
+  deploy/terraform/         Standalone IRSA + optional CloudFront for a customer's cluster
 
 workshop/                   THE LAB — only needed to develop/demo the agent
   terraform/                VPC + EKS cluster, Bedrock IRSA, CloudFront (all-in-one state)

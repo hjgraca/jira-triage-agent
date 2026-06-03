@@ -44,14 +44,14 @@ curl -sS "$BASE/rest/api/3/myself" -H "Authorization: Basic $AUTH" -H 'Accept: a
   | jq '{accountId, displayName, emailAddress}'
 ```
 
-The listener resolves this automatically at startup via `/myself`, but you'll also
+You will
 want the **accountIds of the humans** allowed to trigger the agent (next step).
 
 ## 3. Define allowed-value sets
 
 The agent **fails closed** — it can only write field values you list. Confirm the
-real values against your project and put them in `agent/deploy/k8s/triage-config.yaml`
-(copy from `agent/deploy/k8s/triage-config.example.yaml`).
+real values against your project and put them in `agent/deploy/k8s/config.yaml`
+(copy from `agent/deploy/k8s/config.example.yaml`).
 
 ```bash
 # Inspect a real issue to read the live priority/issue-type names:
@@ -74,7 +74,7 @@ curl -sS "$BASE/rest/api/3/issue/<KEY>?fields=priority,issuetype,labels" \
 
 Decide which Jira accountIds may trigger a run by adding the `triage` label, and
 set `AUTHORIZED_ACTORS` (comma-separated accountIds) in
-`agent/deploy/k8s/triage-listener.yaml`. This stops anyone-who-can-edit-labels from
+`agent/deploy/k8s/receiver.yaml`. This stops anyone-who-can-edit-labels from
 spending Bedrock tokens. The trigger passes the initiator's accountId, and the
 listener drops label-adds from anyone not on this list (R6b).
 
@@ -88,7 +88,7 @@ listener drops label-adds from anyone not on this list (R6b).
 > path. The catch: Automation's *Send web request* **can't compute an HMAC** over
 > the body — so it authenticates with a fixed shared-secret header instead.
 
-**Prereq:** set `automation-shared-secret` in `agent/deploy/k8s/triage-secrets.yaml`
+**Prereq:** set `automation-shared-secret` in `agent/deploy/k8s/secrets.yaml`
 (`openssl rand -hex 32`), apply the secret, and roll the deployment. This becomes
 the `AUTOMATION_SHARED_SECRET` the listener checks (constant-time) against the
 `X-Triage-Token` header.
@@ -135,7 +135,7 @@ event is eligible by construction (the rule's label condition is the gate), whil
 On DC/Server, system webhooks deliver reliably and sign each request with an
 HMAC, so this is the stronger path there.
 
-**Prereq:** set `webhook-hmac-secret` in `agent/deploy/k8s/triage-secrets.yaml`
+**Prereq:** set `webhook-hmac-secret` in `agent/deploy/k8s/secrets.yaml`
 (`openssl rand -hex 32`), apply, and roll the deployment. Use the **same** value
 as the webhook's secret below. This becomes `WEBHOOK_HMAC_SECRET`, which the
 listener validates against the `X-Hub-Signature` header in constant time.

@@ -64,7 +64,7 @@ have no public ingress path, you'll use CloudFront (default in
 CloudFront's origin CIDRs.
 
 > If the cluster enforces NetworkPolicy (AWS VPC CNI with the network-policy
-> controller enabled), the bundled `agent/deploy/k8s/triage-netpol.yaml` egress
+> controller enabled), the bundled `agent/deploy/k8s/netpol.yaml` egress
 > allowlist applies. If it does **not** enforce policy, that file is inert — see
 > [Security](06-security.md).
 

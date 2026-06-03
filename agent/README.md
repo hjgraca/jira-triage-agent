@@ -47,11 +47,11 @@ cd agent/deploy/terraform && cp example.tfvars terraform.tfvars   # edit, then:
 terraform init && terraform apply
 
 # 2. image — three layers: base (engine) → harness (CLI) → agent (one agent)
-make triage-image AGENT=jira-triage HARNESS=pi
+make agent-image AGENT=jira-triage HARNESS=pi
 #   …or raw:
-#   docker build -f agent/deploy/docker/base.Dockerfile  -t triage-base:local       agent
-#   docker build -f agent/deploy/docker/pi.Dockerfile    --build-arg BASE=triage-base:local -t triage-pi:local agent
-#   docker build -f agent/agents/jira-triage/Dockerfile  --build-arg BASE=triage-pi:local   -t <repo>:latest  agent
+#   docker build -f agent/deploy/docker/base.Dockerfile  -t agent-base:local       agent
+#   docker build -f agent/deploy/docker/pi.Dockerfile    --build-arg BASE=agent-base:local -t agent-pi:local agent
+#   docker build -f agent/agents/jira-triage/Dockerfile  --build-arg BASE=agent-pi:local   -t <repo>:latest  agent
 
 # 3. config + secrets (fill the .example templates), set the SA role ARN,
 #    image, JIRA_BASE_URL, GITLAB_BASE_URL, AUTHORIZED_ACTORS, then:

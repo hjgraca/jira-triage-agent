@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
-const { verifySignature, verifySharedSecret } = require('../listener/auth');
+const { verifySignature, verifySharedSecret } = require('../lib/auth');
 
 const SECRET = 'a'.repeat(64);
 function sign(body, secret = SECRET) {

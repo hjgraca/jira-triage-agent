@@ -5,7 +5,7 @@
 // eligibility. All the Jira-specific shape lives here; the listener core is
 // trigger-agnostic.
 
-const { verifySignature, verifySharedSecret } = require('../listener/auth');
+const { verifySignature, verifySharedSecret } = require('../lib/auth');
 
 const TRIGGER_LABEL = process.env.TRIGGER_LABEL || 'triage';
 const AUTOMATION_TOKEN_HEADER = 'x-triage-token';
@@ -64,22 +64,22 @@ function payloadCarriesMarker(payload, marker) {
 }
 
 /**
- * Decide what to do, given the parsed payload, the agent definition, and
- * runtime state. Returns { action:'spawn', vars } or { action:'drop', reason }.
+ * Decide what to do, given the parsed payload and the agent definition.
+ * Returns { action:'spawn', vars } or { action:'drop', reason }.
  *
  * vars = template variables exposed to the agent's prompt ({{key}}).
- * state = { botActor, loopMarker } (loop-guard inputs the core supplies).
+ *
+ * Stateless: the loop guard relies only on the agent's own loop marker
+ * (def.loopMarker) appearing in the triggering comment — no bot-account lookup,
+ * so the receiver needs no /myself call or any per-instance state.
  */
-function decide(payload, def, state) {
+function decide(payload, def) {
   const event = payload?.webhookEvent;
   const actorId = payload?.user?.accountId || null;
 
-  // Loop guard (R7): drop the agent's own writes — by bot actor id, or
-  // statelessly by the agent's loop marker appearing in the triggering comment.
-  if (state.botActor && actorId && actorId === state.botActor) {
-    return { action: 'drop', reason: 'loop-guard: bot actor' };
-  }
-  if (state.loopMarker && payloadCarriesMarker(payload, state.loopMarker)) {
+  // Loop guard (R7): drop the agent's own writes — statelessly, by the agent's
+  // loop marker appearing in the triggering comment.
+  if (def.loopMarker && payloadCarriesMarker(payload, def.loopMarker)) {
     return { action: 'drop', reason: 'loop-guard: self-write marker' };
   }
 

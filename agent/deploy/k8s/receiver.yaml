@@ -1,0 +1,79 @@
+# The webhook receiver: thin, stateless, horizontally scalable. It authenticates
+# + gates an event, then creates ONE run Job (rbac.yaml grants that), and acks.
+# No per-event state lives here, so replicas can be >1 and a restart loses
+# nothing (contrast the old single-replica in-memory listener).
+#
+# It runs the SAME agent image as the Jobs it creates (command → receiver.js),
+# so the gate reads the exact SKILL.md the run will use.
+#
+# Set <AGENT_IMAGE> to your built agent image (Makefile: make agent-image …).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-receiver
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-receiver
+spec:
+  replicas: 2 # stateless → scale freely
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-receiver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-receiver
+    spec:
+      serviceAccountName: agent-receiver
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: receiver
+          image: <AGENT_IMAGE>
+          command: ["node", "runtime/receiver.js"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: WEBHOOK_PATH, value: "/webhook" }
+            - { name: TRIGGER, value: "jira" }
+            # The image to stamp into run Jobs — normally this same image.
+            - { name: AGENT_IMAGE, value: "<AGENT_IMAGE>" }
+            # Non-secret env passed to each run Job (harness + model).
+            - { name: RUN_ENV, value: "HARNESS=pi" }
+            # Run Jobs load creds themselves from these (envFrom) — the receiver
+            # never sees secret values.
+            - { name: RUN_SECRET, value: "agent-secrets" }
+            - { name: RUN_CONFIGMAP, value: "agent-config" }
+            # Trust the in-cluster API server's CA for the Job-create call.
+            - { name: NODE_EXTRA_CA_CERTS, value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" }
+            # Webhook auth secrets (the receiver only needs these to verify).
+            - name: WEBHOOK_HMAC_SECRET
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: webhook-hmac-secret, optional: true } }
+            - name: SHARED_SECRET
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: automation-shared-secret, optional: true } }
+            # Who may trigger via the label (R6b); ∪ the agent def's own list.
+            - name: AUTHORIZED_ACTORS
+              value: "<COMMA_SEPARATED_ACCOUNT_IDS>"
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-receiver
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-receiver
+spec:
+  selector:
+    app.kubernetes.io/name: agent-receiver
+  ports:
+    - { name: http, port: 80, targetPort: http }

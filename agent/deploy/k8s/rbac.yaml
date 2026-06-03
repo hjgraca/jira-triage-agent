@@ -1,0 +1,28 @@
+# RBAC: let the receiver create run Jobs — and nothing more.
+#
+# This is the only privilege the receiver needs. Scoped to Jobs in the agents
+# namespace (create + get; get lets it treat a 409 as "already exists" = dup).
+# It cannot touch secrets, pods, or anything cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-receiver-jobs
+  namespace: agents
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-receiver-jobs
+  namespace: agents
+subjects:
+  - kind: ServiceAccount
+    name: agent-receiver
+    namespace: agents
+roleRef:
+  kind: Role
+  name: agent-receiver-jobs
+  apiGroup: rbac.authorization.k8s.io

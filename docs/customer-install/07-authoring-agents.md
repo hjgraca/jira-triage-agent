@@ -18,7 +18,7 @@ skills/<your-agent>/
 ```
 
 `SKILL.md` frontmatter fields (read by
-[agent-def.js](../../agent/runtime/listener/agent-def.js)):
+[agent-def.js](../../agent/runtime/lib/agent-def.js)):
 
 ```yaml
 ---
@@ -90,7 +90,7 @@ README's "add your own" pattern (triggers follow the same shape).
 ## What stays fixed no matter the agent
 
 The runner's guardrails apply to every agent: request auth, dedupe, the spend
-limiter (`MAX_CONCURRENT`/`SPAWN_CEILING`/`DAILY_BUDGET`), the watchdog, and the
+run-concurrency ResourceQuota, the per-run Job deadline, and the
 egress NetworkPolicy. The loop guard and actor-allowlist apply on triggers that
 support them (the Jira trigger does; the generic trigger trusts an authenticated
 caller — see [Security](06-security.md)).

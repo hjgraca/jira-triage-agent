@@ -27,7 +27,7 @@ GitLab → **Project (or Group) → Settings → Repository → Deploy tokens**:
 
 ## 2. Make GitLab reachable from the cluster
 
-Set `GITLAB_BASE_URL` (in `agent/deploy/k8s/triage-listener.yaml`) to a URL the pod can
+Set `GITLAB_BASE_URL` (in `agent/deploy/k8s/receiver.yaml`) to a URL the pod can
 reach:
 
 - **In-cluster GitLab:** use the Service DNS, including the port. In the workshop
@@ -40,7 +40,7 @@ reach:
 Quick reachability check from inside the cluster:
 
 ```bash
-kubectl -n triage run gl-probe --rm -it --restart=Never --image=curlimages/curl -- \
+kubectl -n agents run gl-probe --rm -it --restart=Never --image=curlimages/curl -- \
   curl -sS -o /dev/null -w '%{http_code}\n' \
   -H "PRIVATE-TOKEN: <token>" "<GITLAB_BASE_URL>/api/v4/projects?per_page=1"
 # expect 200

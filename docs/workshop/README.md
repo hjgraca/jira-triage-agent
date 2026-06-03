@@ -132,11 +132,11 @@ cluster and the Bedrock role. Follow:
    workshop Makefile shortcuts:
 
    ```bash
-   make triage-image            # build + push the image to ECR
+   make agent-image            # build + push the image to ECR
    # set the IRSA ARN, secrets, config, AUTHORIZED_ACTORS, JIRA_BASE_URL (see deploy guide)
    make triage                  # apply agent/deploy/k8s manifests
    # then wire CloudFront:
-   LB=$(kubectl get svc -n triage triage-listener \
+   LB=$(kubectl get svc -n agents agent-receiver \
      -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
    terraform -chdir=workshop/terraform apply -var "triage_listener_lb_dns=$LB"
    terraform -chdir=workshop/terraform output -raw triage_webhook_url
