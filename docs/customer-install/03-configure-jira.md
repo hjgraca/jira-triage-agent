@@ -27,7 +27,7 @@ Generate an API token:
 - **Data Center / Server:** a Personal Access Token (Profile → Personal Access
   Tokens), or use the account password if PATs are unavailable.
 
-These become the `jira-email` and `jira-api-token` keys in the Kubernetes secret.
+These become the `JIRA_EMAIL` and `JIRA_API_TOKEN` keys in the Kubernetes secret.
 
 Grant the bot only what it needs in the target project: **add comments, edit
 issues, transition issues** (if you enable transitions), and **browse**.
@@ -88,7 +88,7 @@ listener drops label-adds from anyone not on this list (R6b).
 > path. The catch: Automation's *Send web request* **can't compute an HMAC** over
 > the body — so it authenticates with a fixed shared-secret header instead.
 
-**Prereq:** set `automation-shared-secret` in `agent/deploy/k8s/secrets.yaml`
+**Prereq:** set `AUTOMATION_SHARED_SECRET` in `agent/deploy/k8s/secrets.yaml`
 (`openssl rand -hex 32`), apply the secret, and roll the deployment. This becomes
 the `AUTOMATION_SHARED_SECRET` the listener checks (constant-time) against the
 `X-Triage-Token` header.
@@ -135,7 +135,7 @@ event is eligible by construction (the rule's label condition is the gate), whil
 On DC/Server, system webhooks deliver reliably and sign each request with an
 HMAC, so this is the stronger path there.
 
-**Prereq:** set `webhook-hmac-secret` in `agent/deploy/k8s/secrets.yaml`
+**Prereq:** set `WEBHOOK_HMAC_SECRET` in `agent/deploy/k8s/secrets.yaml`
 (`openssl rand -hex 32`), apply, and roll the deployment. Use the **same** value
 as the webhook's secret below. This becomes `WEBHOOK_HMAC_SECRET`, which the
 listener validates against the `X-Hub-Signature` header in constant time.
@@ -144,7 +144,7 @@ Create a **system** webhook (not a dynamic/Connect webhook) in Jira admin
 (**System → WebHooks**) or via `POST /rest/webhooks/1.0/webhook`:
 
 - **URL:** your webhook URL (the `triage_webhook_url` output, or your ALB URL).
-- **Secret:** the `webhook-hmac-secret` value.
+- **Secret:** the `WEBHOOK_HMAC_SECRET` value.
 - **Events:** `Issue: created`, `Issue: updated`.
 - **JQL filter (recommended):** scope to the project, e.g. `project = KAN`.
 
@@ -164,12 +164,13 @@ log line.
 
 ## Which secret do I need?
 
-| Jira flavor | Trigger | Secret to set | Listener env |
-|---|---|---|---|
-| Cloud | Automation rule | `automation-shared-secret` | `AUTOMATION_SHARED_SECRET` |
-| Data Center / Server | System webhook | `webhook-hmac-secret` | `WEBHOOK_HMAC_SECRET` |
+| Jira flavor | Trigger | Secret key to set |
+|---|---|---|
+| Cloud | Automation rule | `AUTOMATION_SHARED_SECRET` |
+| Data Center / Server | System webhook | `WEBHOOK_HMAC_SECRET` |
 
-You only need the one for your path; the listener enables a path only when its
-secret is set. (Setting both is fine — e.g. migrating Cloud → DC.)
+You only need the one for your path; the receiver enables a path only when its
+secret is set. (Setting both is fine — e.g. migrating Cloud → DC.) The key name
+**is** the env var the receiver reads — the secret is loaded via `envFrom`.
 
 Next → [Deploy the agent](04-deploy-agent.md)

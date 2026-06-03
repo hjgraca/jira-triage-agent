@@ -66,10 +66,11 @@ raw three-step build is shown per harness below.
    ```
 2. **Add the API key** to `agent/deploy/k8s/secrets.yaml`:
    ```yaml
-   kiro-api-key: "ksk_xxxxxxxx"   # from https://app.kiro.dev
+   KIRO_API_KEY: "ksk_xxxxxxxx"   # from https://app.kiro.dev
    ```
-   the receiver already maps it to `KIRO_API_KEY` (`optional: true`, so pi
-   deployments are unaffected).
+   The run Job loads the whole secret via `envFrom`, so this key reaches
+   `kiro-cli` as `$KIRO_API_KEY` directly (pi ignores it). The key **must** be
+   `KIRO_API_KEY` — a dash-cased key would be dropped by the shell.
 3. **Set the harness:** `HARNESS: "kiro-cli"` in receiver.yaml.
 4. Apply secret + receiver and roll the deployment.
 
@@ -91,13 +92,14 @@ raw three-step build is shown per harness below.
    docker build -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=agent-base:local -t agent-opencode:local agent
    docker build -f agent/agents/jira-triage/Dockerfile     --build-arg BASE=agent-opencode:local -t "$REPO:latest" agent
    ```
-2. **Add the provider key** to `agent/deploy/k8s/secrets.yaml`:
+2. **Add the provider key** to `agent/deploy/k8s/secrets.yaml`, named for the
+   env var your provider expects (opencode reads it directly from env):
    ```yaml
-   opencode-provider-key: "<your provider API key>"   # e.g. an Anthropic key
+   ANTHROPIC_API_KEY: "<your provider API key>"   # e.g. an Anthropic key
    ```
-   The listener maps it to **`ANTHROPIC_API_KEY`** by default. For a different
-   provider, change that env `name:` in `receiver.yaml` to the var
-   opencode's provider expects (run `opencode models` to see provider/model ids).
+   The run Job loads the whole secret via `envFrom`, so this reaches opencode as
+   `$ANTHROPIC_API_KEY`. For a different provider, name the key for that
+   provider's env var (run `opencode models` to see provider/model ids).
 3. **Set the harness + model:** `HARNESS: "opencode"`, and set the model in
    `provider/model` form via `OPENCODE_MODEL` (or `TRIAGE_MODEL` if it already
    has a provider prefix). A bare model id is ignored — opencode requires the

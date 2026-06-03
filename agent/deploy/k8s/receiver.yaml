@@ -6,7 +6,8 @@
 # It runs the SAME agent image as the Jobs it creates (command → receiver.js),
 # so the gate reads the exact SKILL.md the run will use.
 #
-# Set 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91 to your built agent image (Makefile: make agent-image …).
+# Set the image below to your built agent image (Makefile: make agent-image …).
+# Currently the kiro-cli build: agent:jira-triage-kiro-<sha>-fix1.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +31,7 @@ spec:
         runAsUser: 10001
       containers:
         - name: receiver
-          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91
+          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-kiro-f7b4f4c-fix1
           command: ["node", "runtime/receiver.js"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -40,9 +41,11 @@ spec:
             - { name: WEBHOOK_PATH, value: "/jira-webhook" }
             - { name: TRIGGER, value: "jira" }
             # The image to stamp into run Jobs — normally this same image.
-            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-pi-d0afa91" }
-            # Non-secret env passed to each run Job (harness + model).
-            - { name: RUN_ENV, value: "HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
+            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-kiro-f7b4f4c-fix1" }
+            # Non-secret env passed to each run Job. HARNESS is the ADAPTER name
+            # (kiro-cli), not the build arg (kiro). kiro ignores MODEL — its model
+            # comes from the Kiro account/agent config — so it's omitted here.
+            - { name: RUN_ENV, value: "HARNESS=kiro-cli,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
             # Run Jobs load creds themselves from these (envFrom) — the receiver
             # never sees secret values.
             - { name: RUN_SECRET, value: "agent-secrets" }
@@ -51,9 +54,9 @@ spec:
             - { name: NODE_EXTRA_CA_CERTS, value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" }
             # Webhook auth secrets (the receiver only needs these to verify).
             - name: WEBHOOK_HMAC_SECRET
-              valueFrom: { secretKeyRef: { name: agent-secrets, key: webhook-hmac-secret, optional: true } }
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: WEBHOOK_HMAC_SECRET, optional: true } }
             - name: SHARED_SECRET
-              valueFrom: { secretKeyRef: { name: agent-secrets, key: automation-shared-secret, optional: true } }
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: AUTOMATION_SHARED_SECRET, optional: true } }
             # Who may trigger via the label (R6b); ∪ the agent def's own list.
             - name: AUTHORIZED_ACTORS
               value: "557058:2ead7aac-3eea-430f-9f79-4967084b8264"

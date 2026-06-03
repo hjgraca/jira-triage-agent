@@ -75,13 +75,13 @@ BASE_URL="${WEBHOOK_URL%/*}"   # strip the /jira-webhook path → scheme://host
 # Pull the auth secrets + an authorized actor straight from the cluster so the
 # signed requests are valid against the live deployment (read-only).
 sec() { kubectl -n "$NS" get secret agent-secrets -o "jsonpath={.data.$1}" 2>/dev/null | base64 -d 2>/dev/null; }
-HMAC="$(sec webhook-hmac-secret)"
-SHARED="$(sec automation-shared-secret)"
+HMAC="$(sec WEBHOOK_HMAC_SECRET)"
+SHARED="$(sec AUTOMATION_SHARED_SECRET)"
 if [ -z "${E2E_ACTOR_ID:-}" ]; then
   E2E_ACTOR_ID="$(kubectl -n "$NS" get deploy agent-receiver \
     -o jsonpath='{range .spec.template.spec.containers[0].env[?(@.name=="AUTHORIZED_ACTORS")]}{.value}{end}' 2>/dev/null | cut -d, -f1)"
 fi
-[ -n "$HMAC$SHARED" ] || die "no auth secret found in $NS/agent-secrets (need webhook-hmac-secret or automation-shared-secret)"
+[ -n "$HMAC$SHARED" ] || die "no auth secret found in $NS/agent-secrets (need WEBHOOK_HMAC_SECRET or AUTOMATION_SHARED_SECRET)"
 
 # Deterministic Job name = sha256(deliveryId)[:16], prefixed by the agent name —
 # this MUST match runtime/lib/job.js, and IS the dedupe key.

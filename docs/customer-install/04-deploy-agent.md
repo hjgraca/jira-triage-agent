@@ -76,12 +76,19 @@ cp agent/deploy/k8s/secrets.example.yaml agent/deploy/k8s/secrets.yaml   # fill 
 `agent/deploy/k8s/secrets.yaml` — set the credentials. You need the auth secret
 for **your** trigger path (and may leave the other as a placeholder):
 
+Keys are **UPPER_SNAKE_CASE** — the run Job loads the secret via `envFrom`, which
+maps each key verbatim to an env var, and the scripts/harnesses read standard env
+names. Dash-cased keys are silently dropped by the shell (the run would fail
+`JIRA_* is required`).
+
 | Key | Value |
 |---|---|
-| `jira-email` / `jira-api-token` | the bot account from [Configure Jira](03-configure-jira.md) |
-| `gitlab-read-token` | the read-only token from [Configure GitLab](02-configure-gitlab.md) |
-| `webhook-hmac-secret` | `openssl rand -hex 32` — **DC/Server** (system webhook) path |
-| `automation-shared-secret` | `openssl rand -hex 32` — **Cloud** (Automation rule) path |
+| `JIRA_EMAIL` / `JIRA_API_TOKEN` | the bot account from [Configure Jira](03-configure-jira.md) |
+| `GITLAB_READ_TOKEN` | the read-only token from [Configure GitLab](02-configure-gitlab.md) |
+| `WEBHOOK_HMAC_SECRET` | `openssl rand -hex 32` — **DC/Server** (system webhook) path |
+| `AUTOMATION_SHARED_SECRET` | `openssl rand -hex 32` — **Cloud** (Automation rule) path |
+| `KIRO_API_KEY` *(kiro-cli only)* | from the Kiro portal — pi/opencode ignore it |
+| `ANTHROPIC_API_KEY` *(opencode only)* | your provider key — pi/kiro ignore it |
 
 `agent/deploy/k8s/namespace.yaml` — set the **agent-runner** ServiceAccount
 annotation to the `triage_bedrock_role_arn` output from step 1 (the run Jobs use

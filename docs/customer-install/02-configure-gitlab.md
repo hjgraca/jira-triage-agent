@@ -19,7 +19,7 @@ GitLab → **Project (or Group) → Settings → Repository → Deploy tokens**:
 
 - **Scopes:** `read_repository` (+ `read_api` if using `route`/`list-repos`)
 - Copy the generated token — it goes into the Kubernetes secret as
-  `gitlab-read-token`.
+  `GITLAB_READ_TOKEN`.
 
 > Do **not** use a full personal access token. The agent runs an LLM over
 > untrusted ticket text with a shell tool; the blast radius of a leaked token
