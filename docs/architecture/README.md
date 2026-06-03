@@ -195,6 +195,11 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
 - **Pluggable harness, fixed skill.** Swapping the coding agent
   (pi ↔ kiro-cli ↔ opencode ↔ your own) changes only a small adapter; the rubric
   and `jira.sh`/`gitlab.sh` scripts are harness-neutral.
+- **Access via bundled scripts, not MCP / a vendor CLI.** `jira.sh`/`gitlab.sh`
+  are the policy-enforcement point (allowlist, fail-closed, label protection,
+  convergent writes, read caps), not removable curl wrappers — and the seam that
+  makes the Jira Cloud→DC port a one-file change. See
+  [ADR 0001](../decisions/0001-jira-gitlab-access-via-scripts-not-mcp-or-vendor-cli.md).
 - **Stateless loop guard.** The guard relies only on the agent's own loop marker
   in the triggering comment — no `/myself` call, no per-instance state, so the
   receiver needs no Jira credentials at all.
