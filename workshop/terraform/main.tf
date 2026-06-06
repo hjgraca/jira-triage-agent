@@ -57,6 +57,22 @@ module "eks" {
   # Grant the Terraform caller cluster-admin so kubectl/helm work post-apply.
   enable_cluster_creator_admin_permissions = true
 
+  # Map the dedicated EKS-only role (see eks-access.tf) to cluster-admin, scoped
+  # to this cluster. Defined here (not via out-of-band `aws eks` CLI) so the
+  # grant is version-controlled and survives `terraform apply`. Conditional on
+  # the role existing.
+  access_entries = var.create_eks_cluster_admin_role ? {
+    cluster_admin = {
+      principal_arn = data.aws_iam_role.eks_cluster_admin[0].arn
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+  } : {}
+
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
