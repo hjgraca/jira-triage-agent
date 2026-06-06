@@ -26,21 +26,21 @@ variable "oidc_provider_arn" {
 }
 
 variable "bedrock_model_id" {
-  description = "Bedrock model ID the agent may invoke. The IAM policy is scoped to exactly this model — never widen to '*'."
+  description = "Bedrock model ID the agent may invoke. The IAM policy is scoped to exactly this model — never widen to '*'. Use the EU cross-region inference profile (eu.*) so inference stays within the EU; the foundation-model ARN is derived from this in bedrock.tf."
   type        = string
-  default     = "us.anthropic.claude-sonnet-4-6"
+  default     = "eu.anthropic.claude-sonnet-4-6"
 }
 
 variable "triage_namespace" {
-  description = "Kubernetes namespace the agent runs in (must match agent/k8s manifests)."
+  description = "Kubernetes namespace the agent runs in. MUST match agent/deploy/k8s manifests (namespace.yaml) — default is \"agents\". If this and triage_service_account don't match the SA the run Job actually uses, EKS injects no IRSA token and every Bedrock call fails AccessDenied with no obvious cause."
   type        = string
-  default     = "triage"
+  default     = "agents"
 }
 
 variable "triage_service_account" {
-  description = "ServiceAccount name the agent pod uses (IRSA-bound; must match agent/k8s manifests)."
+  description = "ServiceAccount name the IRSA-bound run Job uses. MUST match agent/deploy/k8s manifests (namespace.yaml ServiceAccount + job.js serviceAccount) — default is \"agent-runner\"."
   type        = string
-  default     = "triage-agent"
+  default     = "agent-runner"
 }
 
 variable "tags" {

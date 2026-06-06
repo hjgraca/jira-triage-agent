@@ -10,13 +10,17 @@
 # and RUN_ENV's HARNESS to the matching adapter. Currently the opencode build.
 #
 # HARNESS / RUN_ENV per harness (see docs/customer-install/03b-choose-harness.md):
-#   pi             RUN_ENV: HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…
+#   pi             RUN_ENV: HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…
 #                  cred: none (agent-runner IRSA → Bedrock)
 #   kiro-cli       RUN_ENV: HARNESS=kiro-cli,GITLAB_BASE_URL=…   (no MODEL; Kiro account picks it)
 #                  cred: KIRO_API_KEY in agent-secrets
-#   opencode       RUN_ENV: HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=…
+#   opencode       RUN_ENV: HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=…
 #                  cred: none (agent-runner IRSA → Bedrock) — or a provider key (e.g. ANTHROPIC_API_KEY) + OPENCODE_MODEL=anthropic/…
 # NOTE: HARNESS is the ADAPTER name (kiro-cli), not the build arg (kiro).
+# REGION/MODEL MUST MATCH TERRAFORM: the model id here (eu.* inference profile)
+# and AWS_REGION must match agent/deploy/terraform's bedrock_model_id (default
+# eu.anthropic.claude-sonnet-4-6) and region, or the scoped IAM policy denies the
+# InvokeModel call (AccessDenied). Change all three together.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,7 +44,9 @@ spec:
         runAsUser: 10001
       containers:
         - name: receiver
-          image: 746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-opencode-54beb8e
+          # REPLACE with your built+pushed image (see Deploy → Step 2/3). The
+          # committed value was a dev-lab image and will NOT pull in your account.
+          image: <ACCT>.dkr.ecr.<REGION>.amazonaws.com/triage-agent:latest
           command: ["node", "runtime/receiver.js"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -50,12 +56,13 @@ spec:
             - { name: WEBHOOK_PATH, value: "/jira-webhook" }
             - { name: TRIGGER, value: "jira" }
             # The image to stamp into run Jobs — normally this same image.
-            - { name: AGENT_IMAGE, value: "746792595426.dkr.ecr.us-west-2.amazonaws.com/agent:jira-triage-opencode-54beb8e" }
+            # REPLACE with the SAME image as above.
+            - { name: AGENT_IMAGE, value: "<ACCT>.dkr.ecr.<REGION>.amazonaws.com/triage-agent:latest" }
             # Non-secret env passed to each run Job. opencode talks to Bedrock via
             # the SAME IRSA role as pi (agent-runner SA → AWS_WEB_IDENTITY_TOKEN_FILE),
             # so no key — but its model id needs the provider prefix
             # (amazon-bedrock/<inference-profile>) and AWS_REGION must be set.
-            - { name: RUN_ENV, value: "HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
+            - { name: RUN_ENV, value: "HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=http://gitlab-webservice-default.gitlab.svc:8080" }
             # Run Jobs load creds themselves from these (envFrom) — the receiver
             # never sees secret values.
             - { name: RUN_SECRET, value: "agent-secrets" }

@@ -37,7 +37,19 @@ module.exports = {
     // the provider prefix; a bare model id (the pi/Bedrock default) would be
     // rejected, so fall through to opencode's own default in that case.
     const m = OPENCODE_MODEL || (model && model.includes('/') ? model : '');
-    if (m) args.push('--model', m);
+    if (m) {
+      args.push('--model', m);
+    } else {
+      // No provider-prefixed model resolved → opencode silently uses ITS OWN
+      // configured default, which may not be in the IRSA policy (AccessDenied)
+      // or may bill an unintended model on a provider key. Warn loudly so a
+      // misconfig is visible in the Job log instead of failing mysteriously.
+      console.error(
+        `opencode: no provider/model id resolved (OPENCODE_MODEL=${JSON.stringify(OPENCODE_MODEL)}, ` +
+          `model=${JSON.stringify(model)}). Falling back to opencode's configured default — ` +
+          `set OPENCODE_MODEL to a 'provider/model' id (e.g. amazon-bedrock/eu.anthropic.claude-sonnet-4-6).`
+      );
+    }
 
     // Auto-approve permissions: there is no human to confirm tool calls in a
     // one-shot run. The skill scripts are the real guardrail (allowed-value
