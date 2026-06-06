@@ -1,5 +1,5 @@
 output "triage_bedrock_role_arn" {
-  description = "IAM role ARN for the agent's IRSA binding. Annotate the triage-agent ServiceAccount with this (eks.amazonaws.com/role-arn in agent/k8s/triage-namespace.yaml)."
+  description = "IAM role ARN for the agent's IRSA binding. Annotate the agent-runner ServiceAccount with this (eks.amazonaws.com/role-arn in agent/deploy/k8s/namespace.yaml)."
   value       = module.triage_bedrock_irsa.iam_role_arn
 }
 

@@ -40,6 +40,7 @@ Do these in sequence. Each page ends by pointing at the next.
 2. **[Configure GitLab](02-configure-gitlab.md)** — read-only token, reachability from the cluster, CODEOWNERS for routing.
 3. **[Configure Jira](03-configure-jira.md)** — bot account + token, allowed-value sets, and the trigger. **Covers both Jira Cloud (Automation rule) and Data Center / Server (HMAC webhook).**
 3b. **[Choose your harness](03b-choose-harness.md)** — pick the coding-agent CLI the agent runs on (**pi** or **kiro-cli**, or bring your own). Optional — defaults to pi.
+3c. **[Model authentication](03c-model-authentication.md)** — how each harness authenticates to its LLM (keyless IRSA vs static key), what must line up, and known gaps.
 4. **[Deploy the agent](04-deploy-agent.md)** — terraform (IRSA + CloudFront), build/push the image, fill in manifests, `kubectl apply`, lock the origin, run the pre-launch checklist.
 5. **[Operations](05-operations.md)** — verify, monitor, rotate credentials, tune cost, troubleshoot.
 6. **[Security](06-security.md)** — the trust model and what you must confirm in your environment.

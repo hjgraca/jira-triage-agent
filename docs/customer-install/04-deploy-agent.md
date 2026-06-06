@@ -26,9 +26,9 @@ Fill `terraform.tfvars` with the values from
 
 ```hcl
 name              = "acme-prod"
-region            = "us-west-2"
-oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/oidc.eks.us-west-2.amazonaws.com/id/EXAMPLE..."
-# bedrock_model_id = "us.anthropic.claude-sonnet-4-6"
+region            = "eu-west-1"
+oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE..."
+# bedrock_model_id = "eu.anthropic.claude-sonnet-4-6"   # MUST match MODEL/AWS_REGION in receiver.yaml
 ```
 
 Apply (first pass — IRSA only; CloudFront comes after the LB exists):

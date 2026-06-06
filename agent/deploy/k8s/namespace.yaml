@@ -27,4 +27,7 @@ metadata:
   annotations:
     # REPLACE with your triage_bedrock_role_arn output (only needed for harnesses
     # that use IRSA, e.g. pi → Bedrock). Harmless to leave for others.
-    eks.amazonaws.com/role-arn: arn:aws:iam::746792595426:role/workshop-triage-bedrock
+    #   terraform -chdir=agent/deploy/terraform output -raw triage_bedrock_role_arn
+    # This is a PLACEHOLDER pointing at the dev lab account — leaving it as-is
+    # binds IRSA to a role in someone else's account, so Bedrock fails AccessDenied.
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/<NAME>-triage-bedrock

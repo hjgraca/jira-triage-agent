@@ -36,7 +36,7 @@ You'll pass the **provider ARN** into `agent/deploy/terraform` as `oidc_provider
 
 ## 2. Amazon Bedrock model access
 
-The agent calls one model (default `us.anthropic.claude-sonnet-4-6`). Confirm the
+The agent calls one model (default `eu.anthropic.claude-sonnet-4-6`). Confirm the
 account/region has access to it (Bedrock console → Model access), or pick a model
 you do have and set `bedrock_model_id` in terraform. The IAM policy is scoped to
 exactly that model — do not widen it to `*`.

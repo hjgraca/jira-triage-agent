@@ -38,9 +38,9 @@ your harness:
 
 | Harness | `RUN_ENV` | Secret key needed | IRSA role used |
 |---|---|---|---|
-| **pi** | `HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
+| **pi** | `HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
 | **kiro-cli** | `HARNESS=kiro-cli,GITLAB_BASE_URL=…` *(no MODEL — Kiro account picks it)* | `KIRO_API_KEY` | none |
-| **opencode** (Bedrock) | `HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
+| **opencode** (Bedrock) | `HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
 | **opencode** (provider key) | `HARNESS=opencode,OPENCODE_MODEL=anthropic/claude-sonnet-4-6,GITLAB_BASE_URL=…` | `ANTHROPIC_API_KEY` | none |
 
 Notes that bite if you skip them:
@@ -51,7 +51,7 @@ Notes that bite if you skip them:
   `--model`; opencode reads `OPENCODE_MODEL` first, then `MODEL` only if it
   already has a `provider/` prefix; kiro ignores both.
 - **opencode on Bedrock needs `AWS_REGION`** in `RUN_ENV`, and the model id must
-  carry the `amazon-bedrock/` prefix + the `us.` inference profile your IRSA
+  carry the `amazon-bedrock/` prefix + the `eu.` inference profile your IRSA
   policy allows.
 - Secret keys are **UPPER_SNAKE_CASE** (`KIRO_API_KEY`, `ANTHROPIC_API_KEY`) — the
   Job loads the secret via `envFrom`, which maps keys verbatim to env vars; a
@@ -79,7 +79,7 @@ The harness is selected in **two places that must agree**:
 
    ```yaml
    - name: RUN_ENV
-     value: "HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…"
+     value: "HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…"
    ```
 
 When you switch harness you change **both** the `image:`/`AGENT_IMAGE` (to the
@@ -96,7 +96,7 @@ image built with that CLI) **and** `RUN_ENV` (per the table above), then
 - **Credential:** none in the pod — the `agent-runner` IRSA ServiceAccount
   supplies Bedrock access. Make sure `agent/deploy/terraform`'s `bedrock_model_id`
   matches the `MODEL` in `RUN_ENV`.
-- `RUN_ENV`: `HARNESS=pi,MODEL=us.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…`.
+- `RUN_ENV`: `HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…`.
 
 ### Using kiro-cli
 
@@ -146,9 +146,9 @@ image built with that CLI) **and** `RUN_ENV` (per the table above), then
    `agent-runner` ServiceAccount's IRSA annotation — the **same** Bedrock role as
    pi. Nothing to add to the secret. In `RUN_ENV` set:
    ```
-   HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-sonnet-4-6,AWS_REGION=us-west-2
+   HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1
    ```
-   The model id needs the `amazon-bedrock/` provider prefix and the `us.`
+   The model id needs the `amazon-bedrock/` provider prefix and the `eu.`
    cross-region inference profile your IRSA policy is scoped to; `AWS_REGION`
    must be set or the SDK can't resolve the endpoint. (`opencode models | grep
    bedrock` lists the available ids.)
@@ -163,7 +163,7 @@ image built with that CLI) **and** `RUN_ENV` (per the table above), then
 3. Apply secret (if any) + receiver and roll the deployment.
 
 > **Model on opencode:** `opencode run` needs `--model provider/model` (e.g.
-> `amazon-bedrock/us.anthropic.claude-sonnet-4-6` or
+> `amazon-bedrock/eu.anthropic.claude-sonnet-4-6` or
 > `anthropic/claude-sonnet-4-6`). The adapter passes it only when the configured
 > model contains a `/`; otherwise it falls through to opencode's configured
 > default. We use `opencode run`, not `opencode serve` — see the table note above.
