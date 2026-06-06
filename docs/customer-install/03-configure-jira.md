@@ -102,6 +102,14 @@ In **Project settings → Automation → Create rule** (or global Automation):
 3. **Action:** *Send web request*:
    - **URL:** your webhook URL — the `triage_webhook_url` terraform output
      (`https://<dist>.cloudfront.net/jira-webhook`), or your own ALB URL.
+     > ⚠️ **Re-check this after any `terraform apply` that recreates CloudFront.**
+     > A recreated distribution gets a **new** `*.cloudfront.net` domain, so this
+     > hand-entered URL goes stale and the rule POSTs to a dead host. The symptom
+     > is silent: **no receiver log at all**, and the rule's audit log shows
+     > *Send web request* → `500` with a **Squid** "could not be retrieved" page
+     > (that's Jira's egress proxy failing to reach the old host — not the
+     > receiver). Re-run `terraform -chdir=workshop/terraform output -raw
+     > triage_webhook_url` and update this field to match.
    - **HTTP method:** `POST`
    - **Headers:**
      | Header | Value |
