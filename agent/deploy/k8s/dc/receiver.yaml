@@ -1,0 +1,103 @@
+# DATA CENTER / in-cluster receiver overlay.
+#
+# Use this INSTEAD OF ../receiver.yaml when Jira reaches the receiver from INSIDE
+# the same cluster (the Brisa case: Jira DC runs in another namespace on the same
+# EKS). There is NO internet exposure here — so the whole CloudFront + public NLB
+# + LBC + prefix-list origin-lock story from ../receiver.yaml is dropped, and the
+# Service is a plain ClusterIP. Jira posts to the in-cluster DNS name:
+#
+#     http://agent-receiver.agents.svc.cluster.local/jira-webhook
+#
+# Everything else (stateless receiver, run-as-Job, RBAC, IRSA→Bedrock) is the
+# same as the Cloud path. The two DC-specific changes vs ../receiver.yaml are:
+#   1. TRIGGER=jira-dc          (actor by user.name/key; DC-shaped dedupe)
+#   2. Service type: ClusterIP  (no LB annotations, no loadBalancerClass)
+#
+# Pair this with dc/ingress-netpol.yaml (lets the Jira namespace reach :8080) and
+# the jira-triage-dc agent image (REST v2 / Bearer PAT / wiki comments).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-receiver
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-receiver
+spec:
+  replicas: 2 # stateless → scale freely
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-receiver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-receiver
+    spec:
+      serviceAccountName: agent-receiver
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: receiver
+          # REPLACE with your built+pushed DC agent image:
+          #   make agent-image AGENT=jira-triage-dc HARNESS=pi
+          image: <ACCT>.dkr.ecr.eu-west-1.amazonaws.com/triage-agent:jira-triage-dc-pi
+          command: ["node", "runtime/receiver.js"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            # In-cluster path: the webhook URL Jira posts to is the Service DNS
+            # name + this path → http://agent-receiver.agents.svc.cluster.local/jira-webhook
+            - { name: WEBHOOK_PATH, value: "/jira-webhook" }
+            # Data Center trigger adapter (vs "jira" for Cloud): actor allowlist
+            # keys on user.name/user.key, dedupe synthesizes <key>-<changelog.id>.
+            - { name: TRIGGER, value: "jira-dc" }
+            # The image to stamp into run Jobs — the SAME DC image as above.
+            - { name: AGENT_IMAGE, value: "<ACCT>.dkr.ecr.eu-west-1.amazonaws.com/triage-agent:jira-triage-dc-pi" }
+            # Non-secret env for each run Job. pi → keyless Bedrock via IRSA.
+            # MODEL + AWS_REGION MUST match terraform bedrock_model_id / region
+            # (eu profile, eu-west-1) or Bedrock denies InvokeModel (AccessDenied).
+            # GITLAB_BASE_URL is the EXTERNAL GitLab URL reached via NAT (HTTPS),
+            # NOT the in-cluster workshop service DNS.
+            - { name: RUN_ENV, value: "HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=https://<your-gitlab-host>" }
+            # Run Jobs load creds themselves (envFrom) — the receiver never sees them.
+            - { name: RUN_SECRET, value: "agent-secrets" }
+            - { name: RUN_CONFIGMAP, value: "agent-config" }
+            - { name: NODE_EXTRA_CA_CERTS, value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" }
+            # DC system webhooks sign with X-Hub-Signature (sha256=…) → HMAC path.
+            # Set WEBHOOK_HMAC_SECRET in agent-secrets to the SAME value as the
+            # webhook's "secret" field. (AUTOMATION_SHARED_SECRET only needed if
+            # you trigger via Automation for Jira instead of a system webhook.)
+            - name: WEBHOOK_HMAC_SECRET
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: WEBHOOK_HMAC_SECRET, optional: true } }
+            - name: SHARED_SECRET
+              valueFrom: { secretKeyRef: { name: agent-secrets, key: AUTOMATION_SHARED_SECRET, optional: true } }
+            # Who may trigger via the label (R6b) — DC USERNAMES (user.name) or
+            # user keys, comma-separated. NOT Cloud accountIds.
+            - name: AUTHORIZED_ACTORS
+              value: "<dc-username-1>,<dc-username-2>"
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+---
+# Plain ClusterIP — reachable only from inside the cluster. Jira (another
+# namespace, same cluster) posts here directly; no LB, no public IP, no
+# CloudFront. The DNS name is agent-receiver.agents.svc.cluster.local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-receiver
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-receiver
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: agent-receiver
+  ports:
+    - { name: http, port: 80, targetPort: http }

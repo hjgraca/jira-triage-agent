@@ -42,6 +42,7 @@ Do these in sequence. Each page ends by pointing at the next.
 3b. **[Choose your harness](03b-choose-harness.md)** — pick the coding-agent CLI the agent runs on (**pi** or **kiro-cli**, or bring your own). Optional — defaults to pi.
 3c. **[Model authentication](03c-model-authentication.md)** — how each harness authenticates to its LLM (keyless IRSA vs static key), what must line up, and known gaps.
 4. **[Deploy the agent](04-deploy-agent.md)** — terraform (IRSA + CloudFront), build/push the image, fill in manifests, `kubectl apply`, lock the origin, run the pre-launch checklist.
+4b. **[Deploy: Jira DC, in-cluster](04b-deploy-data-center-in-cluster.md)** — addendum for when Jira **Data Center** runs in the **same cluster** (no internet exposure): `ClusterIP` receiver, `TRIGGER=jira-dc`, the `jira-triage-dc` image, an ingress NetworkPolicy, in-cluster webhook URL. Use instead of CloudFront/NLB in Step 5.
 5. **[Operations](05-operations.md)** — verify, monitor, rotate credentials, tune cost, troubleshoot.
 6. **[Security](06-security.md)** — the trust model and what you must confirm in your environment.
 7. **[Authoring agents](07-authoring-agents.md)** — the listener is a generic runner; the skill's `SKILL.md` frontmatter defines the agent. Write a new agent without touching code.
