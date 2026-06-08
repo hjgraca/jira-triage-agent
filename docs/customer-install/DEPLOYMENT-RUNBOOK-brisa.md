@@ -37,8 +37,8 @@ step** — every later placeholder comes from here.
 
 | # | Value | Where it's used | Asked of |
 |---|---|---|---|
-| 1 | EKS **cluster name** + **region** (expect `eu-west-1`) | terraform, kubeconfig | CUST |
-| 2 | Cluster **OIDC provider ARN** | `terraform.tfvars` | CUST/HG |
+| 1 | EKS **cluster name** + **region** (expect `eu-west-1`) | `irsa-bedrock.sh`, kubeconfig | CUST |
+| 2 | Cluster **OIDC provider ARN** (only for the raw-`aws` fallback; `eksctl` derives it) | `irsa-bedrock.sh` fallback | CUST/HG |
 | 3 | **Jira namespace** name (where Jira DC pods run) | `dc/ingress-netpol.yaml` | CUST |
 | 4 | Does the **VPC CNI network-policy controller** enforce policy? (`ENABLE_NETWORK_POLICY=true`) | netpol behavior | CUST |
 | 5 | Jira **base URL** for write-back (in-cluster DNS or corporate ALB host) | `JIRA_BASE_URL` | CUST |
@@ -55,10 +55,12 @@ fence). If #6 says PATs are disabled, you'll set `JIRA_AUTH_SCHEME=basic`.
 ### Step 0.2 — Confirm tooling on the deploy machine (HG)
 
 ```bash
-kubectl version --client && terraform version && aws --version && docker buildx version && jq --version
+kubectl version --client && aws --version && eksctl version && docker buildx version && jq --version
 ```
 
-**Exit check:** `kubectl`, `terraform >= 1.5`, `aws v2`, `docker buildx`, `jq` all present.
+**Exit check:** `kubectl`, `aws v2`, `eksctl`, `docker buildx`, `jq` all present.
+(No Terraform — the one IAM role is created by `dc/irsa-bedrock.sh`. If `eksctl`
+isn't available, the script prints a raw-`aws iam` fallback instead.)
 
 ### Step 0.3 — Run the DC test suites locally (HG)
 
@@ -89,32 +91,22 @@ aws bedrock list-foundation-models --region eu-west-1 \
 ```
 returns the model, and Model access shows **Access granted**.
 
-### Step 1.2 — Confirm the cluster OIDC provider (HG, ReadOnly creds)
+### Step 1.2 — Create the Bedrock IRSA role (HG) — one script, no Terraform
+
+The agent's only cloud resource is one IAM role (policy scoped to the model, trust
+on the cluster OIDC for `agents:agent-runner`). The bundled script creates it; it
+also associates the cluster OIDC provider if it's missing.
 
 ```bash
-CLUSTER=<cluster>; REGION=eu-west-1
-aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
-  --query 'cluster.identity.oidc.issuer' --output text
-aws iam list-open-id-connect-providers     # match the trailing id to the issuer URL
-```
-If no provider matches: `eksctl utils associate-iam-oidc-provider --cluster "$CLUSTER" --region "$REGION" --approve`.
-
-**Exit check:** you have the **OIDC provider ARN** (value #2).
-
-### Step 1.3 — Apply terraform (IRSA only — NO CloudFront) (HG)
-
-```bash
-cd agent/deploy/terraform
-cp example.tfvars terraform.tfvars
-# edit: name="brisa-devtools", region="eu-west-1", oidc_provider_arn="<#2>"
-# leave bedrock_model_id default (eu.anthropic.claude-sonnet-4-6)
-# DO NOT set listener_lb_dns  ← keeps CloudFront disabled (in-cluster path)
-terraform init && terraform apply
-terraform output -raw triage_bedrock_role_arn        # → record for Step 3.2
+CLUSTER=<cluster> REGION=eu-west-1 \
+  agent/deploy/k8s/dc/irsa-bedrock.sh
+# prints:  eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<cluster>-triage-bedrock
 ```
 
-**Exit check:** apply succeeds; `triage_bedrock_role_arn` printed;
-`terraform output -raw triage_webhook_url` is **empty** (confirms CloudFront off).
+**Exit check:** the script prints a **role ARN** — record it for Step 4.2
+(`namespace.yaml`). The IAM policy is scoped to `eu.anthropic.claude-sonnet-4-6`,
+not `*`. (No `eksctl`? The script prints a raw-`aws iam` fallback that needs the
+OIDC provider ARN, value #2.)
 
 ---
 
@@ -126,11 +118,17 @@ terraform output -raw triage_bedrock_role_arn        # → record for Step 3.2
 aws ecr create-repository --repository-name triage-agent --region eu-west-1 2>/dev/null || true
 ```
 
-### Step 2.2 — Build + push the DC agent image (HG)
+### Step 2.2 — Build + push the DC agent image (HG) — raw docker, no `make`
+
+Three layers, build context `agent/`, pinned `linux/amd64`:
 
 ```bash
-cd <repo>
-make agent-image AGENT=jira-triage-dc HARNESS=pi REGION=eu-west-1 AGENT_ECR_REPO=triage-agent
+ACCT=$(aws sts get-caller-identity --query Account --output text)
+REPO=$ACCT.dkr.ecr.eu-west-1.amazonaws.com/triage-agent
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin "${REPO%/*}"
+docker buildx build --platform linux/amd64 -f agent/deploy/docker/base.Dockerfile -t agent-base:local --load agent
+docker buildx build --platform linux/amd64 -f agent/deploy/docker/pi.Dockerfile --build-arg BASE=agent-base:local -t agent-pi:local --load agent
+docker buildx build --platform linux/amd64 -f agent/agents/jira-triage-dc/Dockerfile --build-arg BASE=agent-pi:local -t "$REPO:jira-triage-dc-pi" --push agent
 # → <acct>.dkr.ecr.eu-west-1.amazonaws.com/triage-agent:jira-triage-dc-pi
 ```
 
@@ -216,7 +214,7 @@ Edit, using the recorded values:
 - **`agent/deploy/k8s/config.yaml`**: real priorities, issuetypes, transitions,
   labels; `assignees`=on-call **usernames** (or `[]` to recommend-only).
 - **`agent/deploy/k8s/namespace.yaml`**: `agent-runner` SA annotation
-  `eks.amazonaws.com/role-arn` = the `triage_bedrock_role_arn` from Step 1.3.
+  `eks.amazonaws.com/role-arn` = the role ARN printed by `irsa-bedrock.sh` (Step 1.2).
 - **`agent/deploy/k8s/dc/receiver.yaml`**: `image` + `AGENT_IMAGE` = your pushed
   tag; `RUN_ENV` `GITLAB_BASE_URL=https://<gitlab-host>`; `AUTHORIZED_ACTORS` =
   trigger **usernames**. (`TRIGGER=jira-dc`, ClusterIP already set.) If PATs are
@@ -388,7 +386,7 @@ Label a clearly high-severity ticket (data loss / security / outage wording).
 | Stop all new runs immediately | `kubectl -n agents scale deploy/agent-receiver --replicas=0` |
 | Stop deliveries at the source | Disable/delete the Jira system webhook |
 | Remove the agent entirely | `kubectl delete ns agents` (deletes receiver, Jobs, config, secrets) |
-| Remove AWS IRSA role | `terraform -chdir=agent/deploy/terraform destroy` |
+| Remove AWS IRSA role | `eksctl delete iamserviceaccount --cluster <cluster> --namespace agents --name agent-runner` (then delete the policy if unused) |
 
 The agent only ever **reads** GitLab and writes to the **one** test project's
 tickets within allowed-value sets — rollback has no data-loss surface beyond
@@ -399,11 +397,11 @@ comments/labels on test tickets.
 ## Critical path (what blocks what)
 
 ```
-0.1 inputs ─┬─ 1.1 Bedrock access ─┐
-            ├─ 1.2 OIDC ─ 1.3 terraform ─┐
-            ├─ 3.1 GitLab token          ├─ 4.2 fill ─ 4.3 apply ─ 5.1 reach ─ 5.2 synthetic ─ 5.4 capture sig/shapes ─ 6.x e2e ─ 7 backstops
-            └─ 3.2 Jira bot/PAT ─ 3.3 HMAC┘                                    ─ 5.3 webhook ──┘
-2.1/2.2 image ───────────────────────────────────────────────┘
+0.1 inputs ─┬─ 1.1 Bedrock access ─────┐
+            ├─ 1.2 irsa-bedrock.sh (IRSA role) ─┐
+            ├─ 3.1 GitLab token                 ├─ 4.2 fill ─ 4.3 apply ─ 5.1 reach ─ 5.2 synthetic ─ 5.4 capture sig/shapes ─ 6.x e2e ─ 7 backstops
+            └─ 3.2 Jira bot/PAT ─ 3.3 HMAC ─────┘                                    ─ 5.3 webhook ──┘
+2.1/2.2 image ────────────────────────────────────────────────┘
 ```
 
 The two hard, customer-gated blockers are **1.1 (Bedrock access)** and **3.2 (Jira

@@ -35,29 +35,56 @@ Read [04](04-deploy-agent.md) first. This page only states the **deltas**.
 | Actors / assignees | accountIds | **DC usernames** (`user.name`) |
 | GitLab | in-cluster or external | **external via NAT** (`https://…`) |
 | Bedrock | eu-west-1 (default) | eu-west-1 (unchanged) |
+| Cloud provisioning | Terraform (IRSA + CloudFront) | **one script** (`dc/irsa-bedrock.sh`) for the IRSA role — no Terraform |
 | Extra manifest | — | **ingress NetworkPolicy** (allow the Jira namespace) |
 
 CloudFront, the LBC, the prefix-list origin lock, and the webhook-URL-drift
 footgun all **go away** on this path.
 
-## Step 1 — Provision IRSA (terraform), no CloudFront
+> **No Terraform, no `make`, no `workshop/`.** This path is **`kubectl` +
+> `docker` + one small script**, so it drops into a cluster you already operate
+> with nothing to stand up. The only AWS resource is a single IAM role for
+> Bedrock, created by `dc/irsa-bedrock.sh` (an `eksctl`/`aws` wrapper) — there is
+> no terraform state, no providers, no tfvars. Everything else is `kubectl apply`.
 
-Exactly [04 Step 1](04-deploy-agent.md#step-1--provision-irsa-and-optionally-cloudfront),
-but **never set `listener_lb_dns`** — that keeps CloudFront disabled. You only
-need the Bedrock IRSA role:
+## Step 1 — Create the Bedrock IRSA role (one script, no Terraform)
+
+The agent calls Bedrock via IRSA: the `agent-runner` ServiceAccount assumes an
+IAM role whose policy is scoped to exactly one model. That role is the **only**
+cloud resource. Create it with the bundled script:
 
 ```bash
-cd agent/deploy/terraform
-cp example.tfvars terraform.tfvars   # name, region=eu-west-1, oidc_provider_arn
-terraform init && terraform apply
-terraform output -raw triage_bedrock_role_arn   # → namespace.yaml agent-runner SA
+CLUSTER=<your-eks-cluster> REGION=eu-west-1 \
+  agent/deploy/k8s/dc/irsa-bedrock.sh
+# → prints:  eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<cluster>-triage-bedrock
 ```
 
-## Step 2 — Build and push the DC image
+It creates a least-privilege `bedrock:InvokeModel` policy (scoped to
+`eu.anthropic.claude-sonnet-4-6`, never `*`), associates the cluster OIDC
+provider if needed, and binds the role to `agents:agent-runner`. Copy the printed
+role ARN into `namespace.yaml` in Step 3. (No `eksctl`? The script prints a
+raw-`aws iam` fallback. To use a different model/region, pass `MODEL=…`/`REGION=…`
+— and change `RUN_ENV` in `dc/receiver.yaml` to match.)
+
+## Step 2 — Build and push the DC image (raw docker, no `make`)
+
+Build context is the `agent/` directory; three layers, agent-blank until the
+last. Pin `linux/amd64` to match the EKS node arch.
 
 ```bash
-make agent-image AGENT=jira-triage-dc HARNESS=pi
-# → <acct>.dkr.ecr.eu-west-1.amazonaws.com/agent:jira-triage-dc-pi
+ACCT=$(aws sts get-caller-identity --query Account --output text)
+REPO=$ACCT.dkr.ecr.eu-west-1.amazonaws.com/triage-agent
+aws ecr describe-repositories --repository-names triage-agent --region eu-west-1 >/dev/null 2>&1 \
+  || aws ecr create-repository --repository-name triage-agent --region eu-west-1 >/dev/null
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin "${REPO%/*}"
+
+docker buildx build --platform linux/amd64 \
+  -f agent/deploy/docker/base.Dockerfile -t agent-base:local --load agent
+docker buildx build --platform linux/amd64 \
+  -f agent/deploy/docker/pi.Dockerfile --build-arg BASE=agent-base:local -t agent-pi:local --load agent
+docker buildx build --platform linux/amd64 \
+  -f agent/agents/jira-triage-dc/Dockerfile --build-arg BASE=agent-pi:local -t "$REPO:jira-triage-dc-pi" --push agent
+# → <acct>.dkr.ecr.eu-west-1.amazonaws.com/triage-agent:jira-triage-dc-pi
 ```
 
 ## Step 3 — Fill in the manifests (DC overlay)
@@ -78,7 +105,8 @@ cp agent/deploy/k8s/secrets.example.yaml   agent/deploy/k8s/secrets.yaml
     set `JIRA_AUTH_SCHEME=basic`; harmless otherwise).
   - `GITLAB_READ_TOKEN` = the read-only deploy token.
   - `WEBHOOK_HMAC_SECRET` = `openssl rand -hex 32` — the DC system-webhook path.
-- **`namespace.yaml`** — `agent-runner` SA annotation = `triage_bedrock_role_arn`.
+- **`namespace.yaml`** — `agent-runner` SA annotation = the role ARN printed by
+  `dc/irsa-bedrock.sh` in Step 1.
 - **`agent/deploy/k8s/dc/receiver.yaml`** — set `image` + `AGENT_IMAGE` to your
   DC image; set `RUN_ENV`'s `GITLAB_BASE_URL` to the external GitLab HTTPS URL;
   set `AUTHORIZED_ACTORS` to the triggering **DC usernames**. `TRIGGER=jira-dc`

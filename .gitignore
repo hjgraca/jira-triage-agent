@@ -32,3 +32,6 @@ agent/deploy/terraform/.terraform/
 agent/deploy/terraform/*.tfstate
 agent/deploy/terraform/*.tfstate.*
 agent/deploy/terraform/terraform.tfvars
+
+# Delivery artifacts (git archive output) — never commit
+brisa-triage-agent-*.tar.gz
