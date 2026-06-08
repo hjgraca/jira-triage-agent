@@ -30,95 +30,102 @@ files and contains **no secrets** (only `*.example` templates are committed; rea
 
 ---
 
-## Recommended channel: push the subset into the customer's OWN GitLab
+## Delivery model: you hand over an artifact; THEY import it
 
-The customer already runs GitLab (in-cluster, they're admins). Delivering into a
-project *there* beats both a zip and GitHub access:
+> **Constraint (Brisa):** you will **not** have access to the customer's GitLab,
+> ECR, or cluster — and don't want it. So **you never push to their side.** You
+> produce a clean, self-contained **artifact** from your repo and hand it across
+> the boundary. The customer imports it into *their* GitLab and builds the image
+> on *their* host. The boundary stays clean: nothing of yours reaches into their
+> tools, and nothing of theirs (creds, kubeconfig, registry) reaches into yours.
 
-- **No blocked-attachment problem** — it's a `git push`, not a file transfer.
-- **Stays in their security boundary** — no external SaaS access to grant/revoke.
-- **A real repo they can self-serve** — edit `SKILL.md`/`config.yaml`, rebuild,
-  redeploy; and pull your future updates.
-- **Your monorepo stays private** — only the `agent/` + `docs/customer-install/`
-  subtree leaves.
+```
+   YOU (private repo)                    │  handoff  │      CUSTOMER (their boundary)
+   ─────────────────────                 │  artifact │      ──────────────────────────
+   git archive → triage-agent-<sha>.tar.gz ─────────────►   import into their GitLab
+                                          │           │      build image on their host
+   (you never touch their GitLab/ECR/k8s) │           │      kubectl apply in their cluster
+```
 
-### One-time setup — split the subset out with `git subtree`
+### Step 1 (YOU) — produce the artifact
 
-`git subtree` extracts a subdirectory's history into a standalone branch you can
-push anywhere. Do this from your monorepo:
+`git archive` emits a clean, versioned tree (**no `.git`, no history, no
+`workshop/`, no internal docs**) selecting both deliverable paths at once:
 
 ```bash
 cd <your-monorepo>
-
-# 1. Make sure the deliverable (incl. the DC variant) is committed on main.
-git status   # clean
-
-# 2. Produce a branch whose ROOT is agent/ (history preserved for that path).
-#    NOTE: subtree splits ONE prefix. We want two (agent/ + docs/customer-install/),
-#    so use the archive approach below for the docs, OR keep docs under agent/.
-git subtree split --prefix=agent -b deliver-agent
-
-# 3. Add the customer's GitLab as a remote (HTTP via their URL, or SSH).
-git remote add brisa-gitlab https://gitlab.brisa.internal/triage/agent.git
-
-# 4. Push the split branch as the customer repo's main.
-git push brisa-gitlab deliver-agent:main
-```
-
-> Because `subtree split` takes a single prefix, the cleanest layout is to deliver
-> `agent/` as the repo root and put the customer docs *inside* it (e.g. copy
-> `docs/customer-install/` to `agent/INSTALL/` before splitting), OR run two
-> pushes (one subtree for `agent/`, and a plain copy of the docs). The
-> **archive method below** sidesteps this by selecting both paths at once — many
-> people find it simpler for the first seed.
-
-### Pushing updates later
-
-When you fix a prompt or a script upstream, re-split and push again:
-
-```bash
-git subtree split --prefix=agent -b deliver-agent
-git push brisa-gitlab deliver-agent:main     # fast-forward; they `git pull`
-```
-
-(If they've made local commits, they merge — standard git. Tell them up front
-whether they should branch their customizations to avoid conflicts.)
-
----
-
-## Seed / fallback channel: a versioned archive (your option 4, done right)
-
-Use this for the **first bootstrap** if even git access needs paperwork, or as a
-belt-and-braces snapshot. `git archive` selects **multiple paths at once** (so it
-beats subtree for grabbing `agent/` + `docs/customer-install/` together) and emits
-a clean, versioned tree with **no `.git`, no history, no other dirs**:
-
-```bash
-cd <your-monorepo>
+git checkout main && git pull --ff-only          # deliver the merged code
 git archive --format=tar.gz \
   --prefix=brisa-triage-agent/ \
   -o brisa-triage-agent-$(git rev-parse --short HEAD).tar.gz \
   HEAD agent docs/customer-install
-# → brisa-triage-agent-<sha>.tar.gz  (agent/ + docs/customer-install/ only)
+# → brisa-triage-agent-<sha>.tar.gz   (agent/ + docs/customer-install/ ONLY)
 ```
 
-Verify before sending (always look inside what you hand over):
+The `<sha>` in the filename is the version — it tells you (and them) exactly which
+commit they're running, and makes "what changed since last drop" answerable.
+
+### Step 2 (YOU) — verify before it leaves your hands
+
+Always look inside what you hand over. This proves no secrets and no private dirs
+slipped in:
+
 ```bash
-tar tzf brisa-triage-agent-*.tar.gz | sed 's,brisa-triage-agent/,,' | sort -u | head
-tar tzf brisa-triage-agent-*.tar.gz | grep -E "secrets\.yaml$|\.tfvars$|tfstate" | grep -v example \
-  && echo "STOP: secret-ish file in archive" || echo "no secrets in archive ✅"
+# contents (should be ONLY agent/ + docs/customer-install/)
+tar tzf brisa-triage-agent-*.tar.gz | sed 's,brisa-triage-agent/,,' | cut -d/ -f1-2 | sort -u
+
+# no secrets / state / private dirs
+tar tzf brisa-triage-agent-*.tar.gz \
+  | grep -E "secrets\.yaml$|config\.yaml$|\.tfvars$|tfstate|workshop/|docs/hld|docs/decisions|\.claude/" \
+  | grep -v example \
+  && echo "STOP: something private slipped in" || echo "clean — only example templates + deliverable ✅"
 ```
 
-**If zip/tar attachments are blocked** (your worry), any of these work because the
-artifact is just bytes:
-- Push it to an **S3 bucket** in the shared account; share a presigned URL.
-- Put it in their **artifact store** (Nexus/Artifactory/GitLab package registry).
-- `scp` to a bastion they control.
-- Last resort: it's a single file — even a base64 paste through an approved
-  channel reconstitutes with `base64 -d`.
+### Step 3 (YOU → CUSTOMER) — move the bytes across
 
-The git-into-their-GitLab path avoids this entirely, which is why it's the primary
-recommendation.
+The artifact is just one file, so the channel is flexible. Pick whatever their
+security policy allows — you do **not** need access to their systems for any of
+these:
+
+- **Shared S3 bucket** in the joint/shared account → presigned URL (you upload to
+  a bucket *you* can write; they download). Most common.
+- Their **artifact store** if they expose an upload endpoint to you
+  (Nexus/Artifactory/GitLab package registry).
+- Secure file-transfer / managed-transfer portal their org runs.
+- If attachments are blocked and nothing else is available: it's a single file —
+  `base64` it and paste through an approved channel; they `base64 -d` to rebuild.
+
+### Step 4 (CUSTOMER, not you) — import into their GitLab
+
+Hand them these commands (they're in the install README too). The customer runs
+them on *their* side; you never see their GitLab URL:
+
+```bash
+tar xzf brisa-triage-agent-<sha>.tar.gz
+cd brisa-triage-agent
+git init && git add -A && git commit -m "Import triage agent <sha>"
+git remote add origin <their-gitlab-project-url>     # THEY supply this
+git push -u origin main
+```
+
+From here it's *their* repo. They self-serve edits (`SKILL.md`, `config.yaml`),
+build the image on their host, and deploy — see
+[GUIDE-configure-and-change-the-prompt.md](GUIDE-configure-and-change-the-prompt.md).
+
+### Updates later — same artifact, they merge
+
+When you fix something upstream, repeat Steps 1–3 with the new `<sha>`. The
+customer applies your update **on their side**, choosing how:
+
+- **Simple (overwrite):** extract the new tar over a clean checkout, commit, push.
+  Loses their local edits — fine if they made none.
+- **Preserves their edits:** keep your drops on a `vendor`/`upstream` branch they
+  merge into their `main`. Tell them up front to **branch their customizations**
+  so an upstream drop merges cleanly instead of clobbering.
+
+Because you hand over a *new versioned artifact* each time (not a live git remote
+they pull from), there is no standing connection between your repo and theirs —
+which is exactly the boundary you want.
 
 ---
 
@@ -135,11 +142,12 @@ Self-serve changes split into two speeds (see
   make agent-image AGENT=jira-triage-dc HARNESS=pi REGION=eu-west-1 AGENT_ECR_REPO=triage-agent
   ```
 
-Confirm with the customer that their build host has Docker + ECR push (it usually
-does if they operate the cluster). If they can build, they're fully self-sufficient
-with just the repo. If they *can't* build images in-house, fall back to the managed
-model (you build + push to their ECR on request) — but that contradicts "self-serve
-prompt changes", so settle this explicitly.
+**Confirmed for Brisa:** the customer **can build images in-house** (their build
+host has Docker + ECR push). So they are fully self-sufficient from the artifact
+alone — they build the image on their side, and you never need access to their
+ECR. (If a customer ever *can't* build in-house, the fallback is the managed model
+— you build + push to their ECR on request — but that contradicts "self-serve
+prompt changes" and doesn't apply here.)
 
 > The `Makefile` at the repo root has lab targets (`make cluster`, `make up`) that
 > reference `workshop/`. If you deliver `agent/` as the repo root, **carry only the
@@ -151,16 +159,16 @@ prompt changes", so settle this explicitly.
 
 ## Suggested first handoff sequence
 
-1. **Commit** the DC variant + new docs on a branch; merge to `main`.
-2. **Seed** their GitLab project via `git archive` → extract → `git init` → push
-   (or `git subtree push` if you can reach their GitLab directly). One time.
-3. Confirm their **build host** can `docker buildx` + ECR push (Part above).
-4. Walk them through one **fast-path** change (add an allowed label via
-   `kubectl apply`) and one **slow-path** change (edit `SKILL.md`, rebuild, bump
-   the image tag) using the configure guide — so they've done both loops once with
-   you watching.
-5. Agree the **update cadence**: how you push upstream fixes into their repo, and
-   how they keep local customizations from conflicting (branch strategy).
+1. **(YOU)** Commit the DC variant + docs; merge to `main`. *(Done — PR #14.)*
+2. **(YOU)** Produce + verify the artifact (Steps 1–2 above) and move it across
+   (Step 3). You stop here — you never touch their systems.
+3. **(CUSTOMER)** Import the artifact into their GitLab (Step 4 above).
+4. **(CUSTOMER, you advising)** Walk them through one **fast-path** change (add an
+   allowed label via `kubectl apply`) and one **slow-path** change (edit
+   `SKILL.md`, rebuild, bump the image tag) using the configure guide — so they've
+   done both loops once with you on a call, but their hands on their keyboard.
+5. **(BOTH)** Agree the **update cadence**: you drop a new versioned artifact on
+   fixes; they decide overwrite-vs-merge and branch their customizations.
 
 ---
 
