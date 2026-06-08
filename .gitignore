@@ -33,5 +33,6 @@ agent/deploy/terraform/*.tfstate
 agent/deploy/terraform/*.tfstate.*
 agent/deploy/terraform/terraform.tfvars
 
-# Delivery artifacts (git archive output) — never commit
-jira-triage-agent-*.tar.gz
+# Delivery artifacts (git archive output) — never commit, any prefix
+*-triage-agent-*.tar.gz
+*.tar.gz
