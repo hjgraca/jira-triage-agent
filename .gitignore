@@ -21,9 +21,6 @@ agent/deploy/k8s/config.yaml
 # macOS junk
 .DS_Store
 
-# Local HLD working doc (author-managed, kept out of git)
-docs/hld/
-
 # Terraform state — never commit. The customer applies agent/deploy/terraform in their
 # own account/backend; the workshop module holds the lab's live state locally.
 workshop/terraform/*.tfstate

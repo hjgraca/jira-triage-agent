@@ -17,7 +17,7 @@ agent/                    # the shippable unit (runtime, agents, deploy manifest
 docs/customer-install/    # all the install/operate/configure guides
 ```
 
-Everything else — `workshop/`, `docs/hld/`, `docs/decisions/`, `docs/brainstorms/`,
+Everything else — `workshop/`, `docs/decisions/`, `docs/brainstorms/`,
 the root `Makefile`'s lab targets — **stays private**. The subset is 59 tracked
 files and contains **no secrets** (only `*.example` templates are committed; real
 `secrets.yaml`/`config.yaml`/`*.tfvars` are gitignored).
@@ -76,7 +76,7 @@ tar tzf jira-triage-agent-*.tar.gz | sed 's,jira-triage-agent/,,' | cut -d/ -f1-
 
 # no secrets / state / private dirs
 tar tzf jira-triage-agent-*.tar.gz \
-  | grep -E "secrets\.yaml$|config\.yaml$|\.tfvars$|tfstate|workshop/|docs/hld|docs/decisions|\.claude/" \
+  | grep -E "secrets\.yaml$|config\.yaml$|\.tfvars$|tfstate|workshop/|docs/decisions|\.claude/" \
   | grep -v example \
   && echo "STOP: something private slipped in" || echo "clean — only example templates + deliverable ✅"
 ```
@@ -182,7 +182,7 @@ prompt changes" and doesn't apply here.)
 ## What NOT to deliver (keep private)
 
 - `workshop/` — your lab; implies you stand up their cluster (you don't).
-- `docs/hld/`, `docs/decisions/`, `docs/brainstorms/`, `docs/ideation/`,
+- `docs/decisions/`, `docs/brainstorms/`, `docs/ideation/`,
   `docs/plans/` — internal thinking.
 - `.claude/`, the auto-memory — your tooling/context.
 - Any filled `secrets.yaml` / `config.yaml` / `*.tfvars` — these are gitignored;
