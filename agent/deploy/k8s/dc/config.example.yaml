@@ -1,0 +1,38 @@
+# Allowed-value sets the triage skill may write (R2) — DATA CENTER variant.
+# Copy to ../config.yaml, fill with the REAL values read from a live DC ticket,
+# and apply. The skill scripts read this at /etc/triage/config.json and FAIL
+# CLOSED on any value not listed here.
+#
+# THE ONE DC DIFFERENCE vs ../config.example.yaml: `assignees` are Jira DC
+# USERNAMES (the user.name login, e.g. "jdoe"), NOT Cloud accountIds. The DC
+# jira.sh assigns via {"name": "<username>"}.
+#
+#   priorities  — exact Jira priority names for the project's scheme. Read them:
+#     curl -sS "$JIRA_BASE_URL/rest/api/2/issue/<KEY>?fields=priority,issuetype,labels" \
+#       -H "Authorization: Bearer $JIRA_API_TOKEN" -H 'Accept: application/json' \
+#       | jq '{priority: .fields.priority.name, issuetype: .fields.issuetype.name}'
+#   assignees   — DC usernames of the on-call pool ONLY (R2c: no black-holes).
+#                 Empty [] = the agent never auto-assigns (recommends in comment).
+#   issuetypes  — exact issue type names for the project.
+#   labels      — the curated label set the agent may apply.
+#   transitions — allowed workflow transition IDs. Read them:
+#     curl -sS "$JIRA_BASE_URL/rest/api/2/issue/<KEY>/transitions" \
+#       -H "Authorization: Bearer $JIRA_API_TOKEN" -H 'Accept: application/json' \
+#       | jq '.transitions[] | {id, name}'
+#                 Empty [] = the agent makes no status moves.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: agent-runner
+data:
+  config.json: |
+    {
+      "labels": ["bug", "enhancement", "needs-info", "ready-for-agent", "ready-for-human", "wontfix", "needs-human"],
+      "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
+      "assignees": [],
+      "issuetypes": ["Task", "Story", "Epic"],
+      "transitions": []
+    }

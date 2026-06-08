@@ -1,0 +1,98 @@
+# GitLab CE on EKS — workshop starting point.
+#
+# Everything runs in-cluster (Postgres, Redis, MinIO, Gitaly) using the chart's
+# bundled subcharts. NOTE: GitLab labels these bundled stateful components as
+# "evaluation only" and removes them entirely from chart 8.x/GitLab 19.0 onward.
+# For a throwaway workshop env that is acceptable; for anything durable, move
+# Postgres -> RDS, Redis -> ElastiCache, object storage -> S3.
+#
+# Install with a chart version that still bundles them (see Makefile: GITLAB_CHART_VERSION).
+
+global:
+  edition: ce
+
+  hosts:
+    # Override `domain` at install time with your real domain (see Makefile).
+    domain: workshop.example.com
+    https: false
+
+  ingress:
+    configureCertmanager: false
+    tls:
+      enabled: false
+
+  # Keep the bundled in-cluster dependencies (workshop scope).
+  # These are the chart defaults but pinned explicitly for clarity.
+
+# cert-manager not needed when TLS is disabled.
+certmanager:
+  install: false
+
+# Use the chart's bundled nginx ingress controller, exposed via an AWS LB.
+nginx-ingress:
+  enabled: true
+  controller:
+    service:
+      # Keep git-over-SSH (port 22) OFF this shared LB. By default the chart
+      # adds :22 here alongside web 80/443, but a Service-wide source range is
+      # the only way to restrict it — which would also lock the web UI. Instead
+      # SSH gets its own IP-restricted LoadBalancer (k8s/gitlab-shell-ssh-lb.yaml),
+      # leaving web 80/443 here public. This is what stops Palisade Riddler from
+      # flagging open SSH and Epoxy from deleting the listener.
+      enableShell: false
+    # Watch ingresses in all namespaces (default is the gitlab namespace only),
+    # so this single controller/LB can front apps deployed in other namespaces.
+    scope:
+      enabled: false
+
+# GitLab Runner off by default — enable if the workshop needs CI execution.
+gitlab-runner:
+  install: false
+
+# Trim resource requests to fit the workshop node group.
+gitlab:
+  webservice:
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+  sidekiq:
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+
+# Disable Prometheus/Grafana monitoring stack to save resources.
+prometheus:
+  install: false
+
+# Bitnami removed their public Docker Hub image tags (Aug 2025 registry
+# migration), so the bundled Postgres/Redis subcharts' default
+# docker.io/bitnami/* images 404. Repoint both to the bitnamilegacy mirror.
+postgresql:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+  global:
+    security:
+      allowInsecureImages: true
+  metrics:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/postgres-exporter
+
+redis:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis
+  global:
+    security:
+      allowInsecureImages: true
+  metrics:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/redis-exporter

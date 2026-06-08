@@ -1,0 +1,27 @@
+# Egress fence for the RUN pods (defense-in-depth). The run pod executes an LLM
+# over untrusted ticket text with a shell tool, so a prompt injection could try
+# to exfiltrate creds/repo data. Default-deny egress; allow only DNS, in-cluster
+# GitLab, and HTTPS (Bedrock/Jira). The receiver is not LLM-facing, so it isn't
+# constrained here.
+#
+# CAVEAT: with the AWS VPC CNI this is enforced only when the network-policy
+# controller is enabled (ENABLE_NETWORK_POLICY=true on the aws-node add-on).
+# Confirm enforcement, or this is inert. See docs/customer-install/06-security.md.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-run-egress
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-run
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 10.0.0.0/16 } }] # DNS + in-cluster GitLab
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 80 }
+    - ports: [{ protocol: TCP, port: 443 }] # HTTPS to AWS (Bedrock) + Atlassian
