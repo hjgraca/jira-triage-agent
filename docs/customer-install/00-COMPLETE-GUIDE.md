@@ -82,7 +82,7 @@ You should see the model id, and the console shows **Access granted**.
 
 The agent calls Bedrock via IRSA: the `agent-runner` ServiceAccount assumes an
 IAM role whose policy is scoped to exactly one model. This is the **only** cloud
-resource. From the repo (or the extracted package) root:
+resource. From the repo root:
 
 ```bash
 CLUSTER=<#1> REGION=eu-west-1 \
@@ -444,7 +444,7 @@ section just above) — budget time for one fix iteration on each.
 
 ```
 agent/
-  Makefile                         make agent-image | test | agent-deploy-dc  (ships in the package)
+  Makefile                         make agent-image | test | agent-deploy-dc  (run from agent/)
   runtime/                         the engine (receiver.js, run.js, trigger/, harness/, lib/)
   agents/jira-triage-dc/           THE DC AGENT — SKILL.md (prompt/rubric), scripts/jira.sh+gitlab.sh
   deploy/

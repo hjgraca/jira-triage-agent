@@ -4,9 +4,9 @@
 > **[04b — Deploy: DC in-cluster](04b-deploy-data-center-in-cluster.md)** instead —
 > it's `kubectl` + one script, no Terraform, no CloudFront. This page (04) is the
 > **Cloud / public-ingress** path. Also note: `make agent-deploy` /
-> `../workshop/…` referenced below are **lab** conveniences and are **not** in the
-> delivered package; the shipped `agent/Makefile` has `agent-image`, `test`, and
-> `agent-deploy-dc`.
+> `../workshop/…` referenced below are **lab** conveniences (the repo-root
+> `Makefile`); for install, use the agent's own `agent/Makefile`, which has
+> `agent-image`, `test`, and `agent-deploy-dc`.
 
 Provision the cloud dependencies, build the image, fill in the manifests, apply,
 lock the webhook origin, and run the pre-launch checklist. This is the

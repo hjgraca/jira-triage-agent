@@ -4,6 +4,12 @@ Install the triage agent into an EKS cluster you **already operate**, against
 your **existing** GitLab and Jira. This installs only the shippable unit under
 `agent/` — it does **not** create a cluster, a VPC, or GitLab.
 
+Clone the repo, then run everything from its root:
+
+```bash
+git clone <repo-url> && cd <repo>
+```
+
 ## Start here → [00 — Complete Guide](00-COMPLETE-GUIDE.md)
 
 **One document, start to finish.** It takes you from nothing to a working
