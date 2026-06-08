@@ -87,7 +87,7 @@ exist.
 
 ## Why MCP / vendor CLI is a poor wholesale swap *here specifically*
 
-- **Target is Jira Data Center, not Cloud.** The customer (Brisa) runs
+- **Target is Jira Data Center, not Cloud.** The customer runs
   **self-hosted Jira DC** on a private network (see `docs/hld/`). Atlassian's
   **twg-cli and Remote MCP are Cloud-only** — a non-starter for the actual
   deployment. The scripts point at any base URL (Cloud *or* DC).

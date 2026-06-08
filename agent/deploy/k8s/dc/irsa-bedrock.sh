@@ -18,7 +18,7 @@
 # Optional overrides (defaults match the K8s manifests — change only if you
 # relocated the SA/namespace or use a different model):
 #   NAMESPACE=agents  SA=agent-runner  MODEL=eu.anthropic.claude-sonnet-4-6
-#   ROLE_NAME=brisa-triage-bedrock
+#   ROLE_NAME=triage-bedrock
 set -euo pipefail
 
 : "${CLUSTER:?set CLUSTER=<your-eks-cluster-name>}"

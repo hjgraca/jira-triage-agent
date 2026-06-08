@@ -35,7 +35,7 @@ make up
 Override defaults inline:
 
 ```bash
-make up REGION=eu-west-1 CLUSTER=brisa DOMAIN=workshop.brisa.dev
+make up REGION=eu-west-1 CLUSTER=workshop DOMAIN=workshop.example.com
 ```
 
 `make up` runs `make cluster` → `make kubeconfig` → `make apps`. The agent is

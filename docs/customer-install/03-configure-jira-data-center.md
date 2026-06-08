@@ -3,7 +3,7 @@
 A concrete, click-by-click guide for the **Jira Data Center / Server admin** (Jira
 10.x) to set up everything the triage agent needs on the Jira side. This is the
 DC-specific companion to [03 — Configure Jira](03-configure-jira.md); follow
-**this** one for Brisa.
+**this** one for a Data Center instance.
 
 Who does this: a **Jira administrator** (you said you're admin on Jira). It does
 not touch the cluster — it's all in the Jira UI + a couple of `curl` checks.
@@ -69,7 +69,7 @@ which is the DC-native way and avoids storing the bot's password.
 
 **Exit check (the engineer or you can run this):**
 ```bash
-BASE=<your-jira-base-url>          # e.g. https://jira.brisa.internal
+BASE=<your-jira-base-url>          # e.g. https://jira.example.internal
 TOKEN=<the-PAT>
 curl -sS "$BASE/rest/api/2/myself" \
   -H "Authorization: Bearer $TOKEN" -H 'Accept: application/json' \

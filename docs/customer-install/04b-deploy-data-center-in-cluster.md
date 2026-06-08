@@ -2,7 +2,7 @@
 
 An addendum to [04 — Deploy the Agent](04-deploy-agent.md) for the case where
 **Jira Data Center runs in the same cluster** as the agent (different namespace)
-and reaches the receiver **directly**, with no public ingress. This is the Brisa
+and reaches the receiver **directly**, with no public ingress. This is the common DC
 topology:
 
 ```

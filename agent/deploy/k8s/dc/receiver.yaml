@@ -1,7 +1,7 @@
 # DATA CENTER / in-cluster receiver overlay.
 #
 # Use this INSTEAD OF ../receiver.yaml when Jira reaches the receiver from INSIDE
-# the same cluster (the Brisa case: Jira DC runs in another namespace on the same
+# the same cluster (the in-cluster case: Jira DC runs in another namespace on the same
 # EKS). There is NO internet exposure here — so the whole CloudFront + public NLB
 # + LBC + prefix-list origin-lock story from ../receiver.yaml is dropped, and the
 # Service is a plain ClusterIP. Jira posts to the in-cluster DNS name:

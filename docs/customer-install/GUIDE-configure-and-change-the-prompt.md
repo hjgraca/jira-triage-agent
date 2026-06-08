@@ -5,9 +5,8 @@ every setting lives, how the agent's "prompt" actually reaches the model, and th
 exact edit → rebuild → redeploy → test loop to change its behavior. No prior
 context assumed.
 
-> This guide uses the **DC variant** (`jira-triage-dc`) since that's what Brisa
-> runs. The Cloud variant (`jira-triage`) is identical in structure — same files,
-> different folder.
+> This guide uses the **DC variant** (`jira-triage-dc`). The Cloud variant
+> (`jira-triage`) is identical in structure — same files, different folder.
 
 > **Paths & `make`, in the delivered package.** You received the agent as an
 > archive whose **root is the `agent/` directory** (it ships with its own
@@ -110,7 +109,7 @@ I traced this in the code so you can trust it:
 
 - `runtime/run.js` loads SKILL.md, takes `prompt:`, and substitutes `{{key}}`
   (`renderPrompt` in `lib/agent-def.js`).
-- For the **pi** harness (what Brisa uses), `runtime/harness/pi.js` launches:
+- For the **pi** harness (the configured one), `runtime/harness/pi.js` launches:
   ```
   pi --mode json --provider amazon-bedrock --model <MODEL> --skill <skill-dir> "<the rendered prompt>"
   ```
@@ -118,7 +117,7 @@ I traced this in the code so you can trust it:
   the rubric body included. So with pi you don't inline the rubric; pi loads it.
 - (For kiro-cli/opencode, which have no `--skill` flag, `runtime/harness/inline-skill.js`
   pastes the rubric body into the prompt instead. Same content, different plumbing.
-  Brisa uses pi, so this doesn't apply — just don't be surprised if you see it.)
+  pi is in use here, so this doesn't apply — just don't be surprised if you see it.)
 
 **Bottom line:** to change *what the agent is told*, you edit `prompt:` (the one-liner)
 and/or the **rubric body** (the real instructions). Both live in the same SKILL.md.
@@ -302,7 +301,7 @@ These are plain environment variables on the receiver Deployment. Edit, then
 
 **`RUN_ENV` decoded** (this one trips people up — it's a single comma-joined string):
 ```
-HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=https://gitlab.brisa.internal
+HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=https://gitlab.example.internal
 ```
 - `HARNESS=pi` — which coding agent CLI runs. Must match the image you built.
 - `MODEL=eu.anthropic.claude-sonnet-4-6` — the Bedrock model. **Must match** the
@@ -319,7 +318,7 @@ Kubernetes Secret, loaded into each run Job as env vars. Keys are
 **UPPER_SNAKE_CASE on purpose** — a dash-cased key gets silently dropped and the
 run fails with "JIRA_* is required".
 
-| Key | What | For Brisa |
+| Key | What | For this install |
 |---|---|---|
 | `JIRA_API_TOKEN` | The bot's Jira credential | the DC **Personal Access Token** |
 | `JIRA_EMAIL` | Bot username | only used if `JIRA_AUTH_SCHEME=basic` |
