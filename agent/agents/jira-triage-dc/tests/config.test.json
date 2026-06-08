@@ -1,0 +1,7 @@
+{
+  "labels": ["bug", "enhancement", "documentation", "docs", "needs-info", "ready-for-agent", "ready-for-human", "wontfix", "needs-human"],
+  "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
+  "assignees": ["jdoe"],
+  "issuetypes": ["Task", "Story", "Epic"],
+  "transitions": ["31"]
+}

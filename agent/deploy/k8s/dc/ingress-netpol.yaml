@@ -1,0 +1,42 @@
+# Receiver INGRESS policy — DATA CENTER / in-cluster path only.
+#
+# WHY THIS EXISTS: in the in-cluster setup, Jira (another namespace, same cluster)
+# posts the webhook straight to the receiver Service. The bundled ../netpol.yaml
+# fences only the RUN pods' egress and leaves the receiver unconstrained. Once any
+# NetworkPolicy selects the receiver, its ingress becomes DEFAULT-DENY — so this
+# file both (a) restricts who may reach the receiver to the Jira namespace, and
+# (b) is REQUIRED for delivery to work at all when the CNI enforces policy.
+#
+# CAVEAT (same as ../netpol.yaml): with the AWS VPC CNI this is enforced only when
+# the network-policy controller is enabled (ENABLE_NETWORK_POLICY=true on the
+# aws-node add-on). If policy is NOT enforced, this file is inert — the receiver
+# is reachable cluster-wide and you rely on the HMAC secret alone for auth. Either
+# way auth still gates spawning (HMAC + actor allowlist); this is defense-in-depth
+# on the network layer.
+#
+# BEFORE APPLYING, set BOTH below to your cluster's real values:
+#   1. The Jira namespace selector — match a label on the Jira namespace. Find it:
+#        kubectl get ns --show-labels | grep -i jira
+#      If the namespace has no distinguishing label, add one:
+#        kubectl label namespace <jira-namespace> kubernetes.io/metadata.name=<jira-namespace>
+#      (kubernetes.io/metadata.name is auto-set by Kubernetes on every namespace,
+#       so it's a safe default selector — replace <jira-namespace> below.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-receiver-ingress
+  namespace: agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-receiver
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Allow ONLY the Jira namespace to reach the receiver. Replace the value
+        # with YOUR Jira namespace (see the header note on finding/labeling it).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: <jira-namespace>
+      ports:
+        - { protocol: TCP, port: 8080 } # receiver containerPort (Service :80 → :8080)

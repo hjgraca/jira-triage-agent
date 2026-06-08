@@ -11,10 +11,12 @@
 //   decide(payload, def, state) -> { action:'spawn', vars } | { action:'drop', reason }
 
 const jira = require('./jira');
+const jiraDc = require('./jira-dc');
 const generic = require('./generic');
 
 const TRIGGERS = {
   jira,
+  'jira-dc': jiraDc,
   generic,
 };
 
