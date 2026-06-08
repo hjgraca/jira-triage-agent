@@ -53,7 +53,7 @@ depth on one step** — you do not follow them in sequence.
 | [06 — Security](06-security.md) | The trust model and what to confirm in your environment. |
 | [07 — Authoring agents](07-authoring-agents.md) | The runner is generic; `SKILL.md` frontmatter defines the agent. Write a new one without touching code. |
 | [Configure & change the prompt](GUIDE-configure-and-change-the-prompt.md) | The two change speeds: fast (`kubectl apply`) vs. rebuild (bump the image tag). |
-| [03b — Choose your harness](03b-choose-harness.md) · [03c — Model auth](03c-model-authentication.md) | Pick the coding-agent CLI (pi / kiro-cli / opencode) and how it authenticates. Optional — defaults to pi on Bedrock via IRSA. |
+| [03b — Choose your harness](03b-choose-harness.md) | Pick the coding-agent CLI (pi / kiro-cli / opencode) and how it authenticates to its model. Optional — defaults to pi on Bedrock via IRSA. |
 
 ## Jira Cloud instead of Data Center?
 

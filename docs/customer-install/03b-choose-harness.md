@@ -1,10 +1,14 @@
-# 03b — Choose Your Harness
+# 03b — Choose Your Harness (and how it authenticates)
 
 The agent's "brain" is a headless coding-agent CLI that each run Job spawns once
 per ticket. It's **pluggable** — the engine is harness-agnostic, so you pick the
 one that fits your subscription and model story. **Three are built in**
-(pi, kiro-cli, opencode — all three proven end-to-end); adding a fourth is a
-small adapter file.
+(pi, kiro-cli, opencode — all proven end-to-end); adding a fourth is a small
+adapter file.
+
+**Optional page.** The default (pi on Bedrock via IRSA, no stored key) is the
+right choice for most installs. Read on only if you want kiro-cli or opencode, or
+want to understand the model-auth before you debug a `403`/`AccessDenied`.
 
 ← [Configure Jira](03-configure-jira.md) · Next → [Deploy the agent](04-deploy-agent.md)
 
@@ -15,173 +19,177 @@ small adapter file.
 | | **pi** (default) | **kiro-cli** | **opencode** |
 |---|---|---|---|
 | Project | [pi.dev](https://github.com/earendil-works/pi) | [kiro.dev](https://kiro.dev) | [opencode.ai](https://opencode.ai) |
-| Invocation | `pi --mode json` | `kiro-cli chat --no-interactive` | `opencode run --format json` |
-| Model backend | **Amazon Bedrock** via IRSA (no key in pod) | Kiro's own backend (**`KIRO_API_KEY`**) | **Bedrock via IRSA** (no key) **or** any provider key |
+| Model backend | **Bedrock** via IRSA (no key in pod) | Kiro's own backend (**`KIRO_API_KEY`**) | **Bedrock via IRSA** (no key) **or** any provider key |
 | Subscription | AWS Bedrock model access | Kiro **Pro / Pro+ / Power** | AWS Bedrock access, or a provider account (e.g. Anthropic) |
-| Skill loading | native `--skill <path>` | rubric **inlined** | rubric **inlined** |
-| Output | streaming JSON | final response; result from **exit code** | streaming JSON + exit code |
-| Model selection | `MODEL` env | Kiro default-model/agent config (`MODEL` ignored) | `OPENCODE_MODEL` (or `MODEL` if it's `provider/model`-shaped) |
-| Permissions | n/a (skill scripts) | `--trust-tools=read,execute_bash` | `--dangerously-skip-permissions` (scripts are the guardrail) |
+| Model selection | `MODEL` env → `--model` | Kiro account default (`MODEL` ignored) | `OPENCODE_MODEL` (or `MODEL` if `provider/model`-shaped) |
 | Proven on | KAN-2 (Bedrock) | KAN-6 (Kiro Pro) | KAN-7 (Bedrock/IRSA) |
 
-All three run the **same** `jira-triage` skill (same rubric, same
-`jira.sh`/`gitlab.sh` scripts, same guardrails). Only the invocation, the
-credential, and result-reading differ — that's the whole point of the adapter
-layer.
+All three run the **same** skill (same rubric, same `jira.sh`/`gitlab.sh`
+scripts, same guardrails). Only the invocation, the credential, and
+result-reading differ — that's the whole point of the adapter layer.
 
-### Receiver `RUN_ENV` per harness (the one thing you set)
+## Keyless vs. static key — the one distinction that matters
+
+There are exactly **two** ways a harness gets model credentials, and the security
+story follows from which one you use:
+
+| | **Keyless (IRSA → Bedrock)** | **Static API key** |
+|---|---|---|
+| Harnesses | **pi**, **opencode** (Option A) | **kiro-cli**, **opencode** (Option B) |
+| What's in the pod | A short-lived, auto-rotated OIDC token mounted by EKS | A long-lived secret string |
+| Source | `agent-runner` SA's IRSA annotation → STS AssumeRoleWithWebIdentity | A K8s `Secret` (`agent-secrets`), via `envFrom` |
+| Scope | An IAM policy scoped to **one model ARN** | Whatever the key's account/plan allows |
+| Rotation | Automatic (token TTL ~1h) | **Manual** — rotate the key, re-apply the Secret |
+| Blast radius if pod is popped | Expires; one model; can't leave the cluster (egress fence) | Valid until you rotate; full account/plan scope |
+
+**Prefer keyless.** It's the default (pi) and the recommended opencode path — no
+model credential to store, leak, or rotate. Use a static key only when the
+harness can't reach Bedrock (kiro-cli) or the customer has a provider account
+they specifically want to use (opencode Option B).
+
+### How keyless (IRSA) works
+
+`agent/deploy/terraform/bedrock.tf` creates an IAM role whose policy is scoped to
+**one** Bedrock model ARN and whose trust is the cluster's OIDC provider for a
+specific `namespace:serviceaccount`. Its ARN goes on the `agent-runner`
+ServiceAccount annotation (`namespace.yaml`). EKS then injects `AWS_ROLE_ARN` +
+`AWS_WEB_IDENTITY_TOKEN_FILE` into the run pod with no action by us; the AWS SDK
+in pi/opencode does `AssumeRoleWithWebIdentity` → `bedrock:InvokeModel` on the
+one allowed model. The agent code adds nothing — `pi.js`'s `buildCommand` returns
+no env, relying on the inherited process env EKS populated.
+
+**Three things must agree or IRSA silently fails** (the #1 cause of "deployed but
+Bedrock returns AccessDenied"):
+
+1. **Namespace + ServiceAccount** — the trust policy's `namespace:serviceaccount`
+   must equal what the run Job uses (`agents` / `agent-runner`). Mismatch → EKS
+   injects no token, SDK falls back to no creds.
+2. **Model id** — the `MODEL`/`OPENCODE_MODEL` in `RUN_ENV` must be the **same**
+   model the Terraform `bedrock_model_id` scoped the policy to.
+3. **Region** — `AWS_REGION` must cover the inference profile. opencode needs it
+   set explicitly in `RUN_ENV` or the SDK can't resolve the endpoint.
+
+## The one thing you set: receiver `RUN_ENV`
 
 The receiver passes `RUN_ENV` (a comma-separated `K=V` list in
-`agent/deploy/k8s/receiver.yaml`) verbatim to every run Job. **This is where you
-select the harness, the model, and any harness-specific env.** Copy the row for
-your harness:
+`receiver.yaml`) verbatim to every run Job. This is where you select the harness,
+the model, and any harness-specific env. Copy the row for your harness:
 
-| Harness | `RUN_ENV` | Secret key needed | IRSA role used |
+| Harness | `RUN_ENV` | Secret key | IRSA role |
 |---|---|---|---|
-| **pi** | `HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
-| **kiro-cli** | `HARNESS=kiro-cli,GITLAB_BASE_URL=…` *(no MODEL — Kiro account picks it)* | `KIRO_API_KEY` | none |
-| **opencode** (Bedrock) | `HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=…` | none | `agent-runner` (Bedrock) |
+| **pi** | `HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…` | none | `agent-runner` |
+| **kiro-cli** | `HARNESS=kiro-cli,GITLAB_BASE_URL=…` *(no MODEL)* | `KIRO_API_KEY` | none |
+| **opencode** (Bedrock) | `HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=…` | none | `agent-runner` |
 | **opencode** (provider key) | `HARNESS=opencode,OPENCODE_MODEL=anthropic/claude-sonnet-4-6,GITLAB_BASE_URL=…` | `ANTHROPIC_API_KEY` | none |
 
-Notes that bite if you skip them:
+Things that bite if you skip them:
 - **`HARNESS` is the adapter name** (`pi` / `kiro-cli` / `opencode`) — *not* the
-  Dockerfile/build arg (`pi` / `kiro` / `opencode`). They differ for kiro
-  (`HARNESS=kiro-cli`, but `make … HARNESS=kiro`).
-- **`MODEL` is the env the engine reads** (not `TRIAGE_MODEL`). pi passes it as
-  `--model`; opencode reads `OPENCODE_MODEL` first, then `MODEL` only if it
-  already has a `provider/` prefix; kiro ignores both.
-- **opencode on Bedrock needs `AWS_REGION`** in `RUN_ENV`, and the model id must
-  carry the `amazon-bedrock/` prefix + the `eu.` inference profile your IRSA
-  policy allows.
+  build arg. They differ for kiro: `RUN_ENV` says `HARNESS=kiro-cli`, but the
+  build is `make … HARNESS=kiro`.
+- **opencode** needs the `amazon-bedrock/` prefix on the model id + `AWS_REGION`;
+  the adapter passes `--model` only when the id contains a `/`, otherwise it
+  silently uses opencode's own default (set `OPENCODE_MODEL` explicitly, and watch
+  the Job log — the adapter logs the resolved model).
+- **kiro-cli** has no `--model` flag — the model comes from your Kiro account
+  config, so `MODEL` is ignored; omit it.
 - Secret keys are **UPPER_SNAKE_CASE** (`KIRO_API_KEY`, `ANTHROPIC_API_KEY`) — the
-  Job loads the secret via `envFrom`, which maps keys verbatim to env vars; a
-  dash-cased key is silently dropped (see [Deploy → Step 3](04-deploy-agent.md)).
-- For the **IRSA (Bedrock) harnesses**, `agent/deploy/terraform`'s
-  `bedrock_model_id` must match the model in `RUN_ENV`, or the scoped IAM policy
-  denies the call.
+  Job loads them via `envFrom`, which maps keys verbatim; a dash-cased key is
+  silently dropped and the run fails auth.
 
-> **opencode `run` vs `serve`.** opencode also has a long-lived HTTP server
-> (`opencode serve`). We use **`opencode run`** (spawn-per-ticket, exits) because
-> it matches the one-ephemeral-run-per-webhook security model; a persistent
-> server would be a different integration shape. If you want warm starts,
-> `opencode run --attach http://host:port` can front a `serve` daemon without
-> changing the adapter. See [harness README](../../agent/runtime/harness/README.md#boundary-this-contract-is-subprocess-shaped).
+## Selecting a harness (two places must agree)
 
-## How to select
+1. **Build** — the CLI is baked into the image as a layer: base (engine) →
+   `<harness>` (engine + CLI) → `<agent>`. `make agent-image AGENT=jira-triage
+   HARNESS=<pi|kiro|opencode>` (or the raw `docker build` sequence in
+   [04 → Step 2](04-deploy-agent.md)).
+2. **Runtime** — `HARNESS` in `receiver.yaml`'s `RUN_ENV` names the **adapter**,
+   and must match the CLI baked into the image.
 
-The harness is selected in **two places that must agree**:
+Switching harness means changing **both** `image:`/`AGENT_IMAGE` (to the
+image built with that CLI) **and** `RUN_ENV`, then `kubectl apply -f
+receiver.yaml` + roll the deployment.
 
-1. **Build** — the CLI is baked into the image as a layer:
-   base (engine) → `<harness>` (engine + CLI) → `<agent>` (the one agent).
-   `make agent-image AGENT=jira-triage HARNESS=<pi|kiro|opencode>`.
-2. **Runtime** — `HARNESS` in `receiver.yaml`'s `RUN_ENV` names the **adapter**
-   the run Job uses (and must match the CLI baked into the image):
-
-   ```yaml
-   - name: RUN_ENV
-     value: "HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…"
-   ```
-
-When you switch harness you change **both** the `image:`/`AGENT_IMAGE` (to the
-image built with that CLI) **and** `RUN_ENV` (per the table above), then
-`kubectl apply -f receiver.yaml` and roll the deployment.
-
-> **Build arg vs adapter name.** `make … HARNESS=kiro` builds `kiro.Dockerfile`,
-> but the runtime adapter is `kiro-cli` → `RUN_ENV` must say `HARNESS=kiro-cli`.
-> pi and opencode use the same word for both.
-
-### Using pi (default)
-
-- **Image:** `make agent-image AGENT=jira-triage HARNESS=pi`.
-- **Credential:** none in the pod — the `agent-runner` IRSA ServiceAccount
-  supplies Bedrock access. Make sure `agent/deploy/terraform`'s `bedrock_model_id`
-  matches the `MODEL` in `RUN_ENV`.
+### pi (default) — keyless, Bedrock only
+- **Build:** `make agent-image AGENT=jira-triage HARNESS=pi`.
+- **Credential:** none in the pod; `agent-runner` IRSA supplies Bedrock.
 - `RUN_ENV`: `HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,GITLAB_BASE_URL=…`.
+- **Model id form:** bare inference-profile id (no provider prefix; pi adds
+  `--provider amazon-bedrock` itself).
 
-### Using kiro-cli
+### kiro-cli — static key, Kiro's backend
+- **Build:** `make agent-image AGENT=jira-triage HARNESS=kiro`.
+- **Key:** add `KIRO_API_KEY: "ksk_…"` (from <https://app.kiro.dev>) to
+  `secrets.yaml`. Not Bedrock — the IRSA role is inert for this harness.
+- `RUN_ENV`: `HARNESS=kiro-cli,GITLAB_BASE_URL=…` (no `MODEL`).
+- **Governance:** any MCP / model / web-fetch policy your Kiro admin sets applies
+  to these headless runs too.
 
-1. **Build the image with kiro:**
-   ```bash
-   make agent-image AGENT=jira-triage HARNESS=kiro
-   # or, raw: base (engine) → kiro (engine + CLI) → agent (one agent)
-   docker build -f agent/deploy/docker/base.Dockerfile    -t agent-base:local       agent
-   docker build -f agent/deploy/docker/kiro.Dockerfile    --build-arg BASE=agent-base:local -t agent-kiro:local agent
-   docker build -f agent/agents/jira-triage/Dockerfile    --build-arg BASE=agent-kiro:local -t "$REPO:latest"  agent
-   ```
-2. **Add the API key** to `agent/deploy/k8s/secrets.yaml`:
-   ```yaml
-   KIRO_API_KEY: "ksk_xxxxxxxx"   # from https://app.kiro.dev
-   ```
-   The run Job loads the whole secret via `envFrom`, so this key reaches
-   `kiro-cli` as `$KIRO_API_KEY` directly (pi ignores it). The key **must** be
-   `KIRO_API_KEY` — a dash-cased key would be dropped by the shell.
-3. **Set the harness:** `HARNESS: "kiro-cli"` in receiver.yaml.
-4. Apply secret + receiver and roll the deployment.
+### opencode — keyless or static key
+- **Build:** `make agent-image AGENT=jira-triage HARNESS=opencode`.
+- **Option A — Bedrock via IRSA (recommended, no key):** reuses the same role pi
+  uses. Nothing in the Secret.
+  `RUN_ENV`: `HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,…`
+- **Option B — provider key:** add e.g. `ANTHROPIC_API_KEY` to `secrets.yaml`.
+  `RUN_ENV`: `HARNESS=opencode,OPENCODE_MODEL=anthropic/claude-sonnet-4-6,…`
+  Bypasses IRSA; billed to the provider account.
 
-> **Model on kiro:** `kiro-cli chat` has no `--model` flag — the model comes from
-> your Kiro default-model / agent configuration, so the `MODEL` env is ignored
-> for this harness (omit it from `RUN_ENV`). Configure the default model in your
-> Kiro account.
+> We use `opencode run` (spawn-per-ticket, exits), not `opencode serve`, because
+> it matches the one-ephemeral-run-per-webhook model. See the
+> [harness README](../../agent/runtime/harness/README.md).
 
-> **Governance:** any MCP / model / web-fetch policies your Kiro administrator
-> sets apply to headless sessions too. If your pipeline depends on MCP servers,
-> the adapter can be extended to pass `--require-mcp-startup` (fail fast).
+## What is NOT a model credential
 
-### Using opencode
+Two other secrets exist; neither authenticates to a model:
+- **`WEBHOOK_HMAC_SECRET` / `AUTOMATION_SHARED_SECRET`** — authenticate the
+  *inbound webhook* (Jira → receiver). They gate who can *trigger* a run.
+- **`JIRA_API_TOKEN` / `GITLAB_READ_TOKEN`** — the agent's *tool* credentials
+  (read code, write the ticket back). The model never sees them as auth.
 
-1. **Build the image with opencode:**
-   ```bash
-   make agent-image AGENT=jira-triage HARNESS=opencode
-   # or, raw: base → opencode → agent
-   docker build -f agent/deploy/docker/base.Dockerfile     -t agent-base:local         agent
-   docker build -f agent/deploy/docker/opencode.Dockerfile --build-arg BASE=agent-base:local -t agent-opencode:local agent
-   docker build -f agent/agents/jira-triage/Dockerfile     --build-arg BASE=agent-opencode:local -t "$REPO:latest" agent
-   ```
-2. **Pick an auth path.** opencode supports **Amazon Bedrock via IRSA** (no key —
-   reuses the same role pi uses) *or* a provider API key.
+Only `KIRO_API_KEY` and the opencode provider key are model credentials, and only
+on the static-key paths.
 
-   **Option A — Bedrock via IRSA (recommended; no key):** opencode's
-   `amazon-bedrock` provider uses the AWS credential chain, including the
-   `AWS_WEB_IDENTITY_TOKEN_FILE`/`AWS_ROLE_ARN` that EKS injects from the
-   `agent-runner` ServiceAccount's IRSA annotation — the **same** Bedrock role as
-   pi. Nothing to add to the secret. In `RUN_ENV` set:
-   ```
-   HARNESS=opencode,OPENCODE_MODEL=amazon-bedrock/eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1
-   ```
-   The model id needs the `amazon-bedrock/` provider prefix and the `eu.`
-   cross-region inference profile your IRSA policy is scoped to; `AWS_REGION`
-   must be set or the SDK can't resolve the endpoint. (`opencode models | grep
-   bedrock` lists the available ids.)
+## Quick decision + verification
 
-   **Option B — provider API key:** add it to `agent/deploy/k8s/secrets.yaml`,
-   named for the env var your provider expects (opencode reads it directly from
-   env via `envFrom`):
-   ```yaml
-   ANTHROPIC_API_KEY: "<your provider API key>"   # e.g. an Anthropic key
-   ```
-   Then set `HARNESS=opencode,OPENCODE_MODEL=anthropic/claude-sonnet-4-6`.
-3. Apply secret (if any) + receiver and roll the deployment.
+```
+Bedrock model access in the cluster's region?
+ ├─ Yes, want zero stored model creds  → pi  (or opencode Option A)   [keyless]
+ ├─ Have a Kiro subscription           → kiro-cli                     [KIRO_API_KEY]
+ └─ Have a provider account to use     → opencode Option B            [provider key]
+```
 
-> **Model on opencode:** `opencode run` needs `--model provider/model` (e.g.
-> `amazon-bedrock/eu.anthropic.claude-sonnet-4-6` or
-> `anthropic/claude-sonnet-4-6`). The adapter passes it only when the configured
-> model contains a `/`; otherwise it falls through to opencode's configured
-> default. We use `opencode run`, not `opencode serve` — see the table note above.
+Verify before launch:
+- **Keyless:** in a run pod, `env | grep AWS_` shows `AWS_ROLE_ARN` +
+  `AWS_WEB_IDENTITY_TOKEN_FILE`; a test run reaches Bedrock without `AccessDenied`.
+- **Static key:** the Secret key name is UPPER_SNAKE_CASE and matches the CLI's
+  expected env var; a test run authenticates (exit 0).
+
+## Risks to confirm in your environment
+
+- **Static keys never self-rotate.** `KIRO_API_KEY` / provider keys are
+  long-lived and only change when you re-apply the Secret. Treat rotation as an
+  operational task ([Operations → rotation](05-operations.md#credential-rotation))
+  and keep the egress fence on. Keyless avoids this entirely — prefer it.
+- **The egress fence is conditional on the CNI.** The NetworkPolicy that stops a
+  compromised run from shipping a token/key off-cluster is only enforced when the
+  AWS VPC CNI network-policy controller is on. Confirm it
+  ([Security → egress fence](06-security.md#egress-fence-r12--conditional-on-your-cni)).
+- **Keyless is EKS-specific.** It's built on EKS IRSA. Porting beyond EKS (GKE/AKS
+  Workload Identity, or self-managed) needs a per-platform provisioning
+  equivalent; the adapter contract (ambient AWS credential chain) is unchanged.
 
 ## Bring your own harness
 
 The engine selects adapters from `agent/runtime/harness/`. To support a different
-CLI: drop in one adapter file (`buildCommand` + optional `interpret` +
-`finalize`), register it in `index.js`, add a `deploy/docker/<harness>.Dockerfile`
-that installs the CLI, then set `image`/`AGENT_IMAGE` to the built image and
-`HARNESS=<adapter>` in `RUN_ENV`. Full guide:
+CLI: drop in one adapter file (`buildCommand` + optional `interpret`/`finalize`),
+register it in `index.js`, add a `deploy/docker/<harness>.Dockerfile` that
+installs the CLI, then set `image`/`AGENT_IMAGE` + `HARNESS=<adapter>` in
+`RUN_ENV`. Full guide:
 **[agent/runtime/harness/README.md](../../agent/runtime/harness/README.md)**.
 
-> **Dockerfile gotcha** (hit by both kiro and opencode): the base image sets
+> **Dockerfile gotcha** (hit by both kiro and opencode): the base sets
 > `HOME=/home/agent` and the CLI installer runs as root, so the binary lands in
-> `/home/agent/.local/bin` (not `/root`) and leaves `~/.local` root-owned. Your
-> Dockerfile must `find` the binary there and `chown -R 10001:10001 /home/agent`
-> so the non-root runtime user can write the CLI's state — see `kiro.Dockerfile`
-> / `opencode.Dockerfile`.
+> `/home/agent/.local/bin` and leaves `~/.local` root-owned. Your Dockerfile must
+> `find` the binary there and `chown -R 10001:10001 /home/agent` — see
+> `kiro.Dockerfile` / `opencode.Dockerfile`.
 
 Next → [Deploy the agent](04-deploy-agent.md)
