@@ -110,7 +110,7 @@ git push -u origin main
 
 From here it's *their* repo. They self-serve edits (`SKILL.md`, `config.yaml`),
 build the image on their host, and deploy — see
-[GUIDE-configure-and-change-the-prompt.md](GUIDE-configure-and-change-the-prompt.md).
+[GUIDE-configure-and-change-the-prompt.md](customer-install/GUIDE-configure-and-change-the-prompt.md).
 
 ### Updates later — same artifact, they merge
 
@@ -132,7 +132,7 @@ which is exactly the boundary you want.
 ## The other half: the customer needs the IMAGE too (or the means to build it)
 
 Self-serve changes split into two speeds (see
-[GUIDE-configure-and-change-the-prompt.md](GUIDE-configure-and-change-the-prompt.md)):
+[GUIDE-configure-and-change-the-prompt.md](customer-install/GUIDE-configure-and-change-the-prompt.md)):
 
 - **Fast path** (config.yaml / receiver.yaml / secrets via `kubectl`) — needs only
   the manifests, which the repo gives them. No image, no build.
@@ -144,7 +144,7 @@ Self-serve changes split into two speeds (see
   make agent-image AGENT=jira-triage-dc HARNESS=pi
   ```
   (Or the raw `docker buildx` sequence in
-  [04b Step 2](04b-deploy-data-center-in-cluster.md#step-2--build-and-push-the-dc-image-raw-docker-no-make)
+  [04b Step 2](customer-install/04b-deploy-data-center-in-cluster.md#step-2--build-and-push-the-dc-image-raw-docker-no-make)
   if they'd rather not use `make`.)
 
 **Confirmed for this engagement:** the customer **can build images in-house** (their build

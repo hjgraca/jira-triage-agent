@@ -422,6 +422,24 @@ rollback has no data-loss surface beyond comments/labels on test tickets.
 
 ---
 
+# Critical path — what blocks what
+
+```
+Values ─┬─ Phase 1.1 Bedrock access ────────┐
+        ├─ Phase 1.2 irsa-bedrock.sh (role) ─┐
+        ├─ Phase 4.1 GitLab token            ├─ 4 fill ─ 6.1 apply ─ 6.2 reach ─ 7 e2e ─ 8 backstops
+        └─ Phase 5 Jira bot/PAT + HMAC ──────┘                       └ 6.3 trigger ┘
+Phase 3 image ──────────────────────────────────────────┘
+```
+
+The two hard, **customer-gated** blockers are **Bedrock access (1.1)** and the
+**Jira bot + PAT (5)** — request both at the very start so they don't stall you.
+The two checks that can only pass against the live instance are **in-cluster
+reachability (6.2)** and **real signature + v2 shapes** (the two items in the
+section just above) — budget time for one fix iteration on each.
+
+---
+
 ## Appendix — the file map
 
 ```
@@ -444,5 +462,4 @@ docs/customer-install/
   03-configure-jira-data-center.md the DC Jira admin deep-dive
   04b-deploy-data-center-in-cluster.md  the DC deploy deep-dive
   GUIDE-configure-and-change-the-prompt.md  how to change behavior
-  GUIDE-deliver-to-customer.md     how this package was handed over
 ```

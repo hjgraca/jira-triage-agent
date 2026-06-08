@@ -70,12 +70,9 @@ Makefile                    Workshop orchestration (cluster -> kubeconfig -> app
 
 ## Quick links
 
-- **Customer install:** [Prerequisites](docs/customer-install/01-prerequisites.md) ·
-  [GitLab](docs/customer-install/02-configure-gitlab.md) ·
-  [Jira](docs/customer-install/03-configure-jira.md) ·
-  [Deploy](docs/customer-install/04-deploy-agent.md) ·
-  [Operations](docs/customer-install/05-operations.md) ·
-  [Security](docs/customer-install/06-security.md)
+- **Customer install:** **[Complete Guide](docs/customer-install/00-COMPLETE-GUIDE.md)**
+  — one document, start to finish (Jira DC in-cluster). Everything else under
+  [docs/customer-install/](docs/customer-install/) is a per-topic deep-dive it links to.
 - **Workshop lab:** [docs/workshop/](docs/workshop/)
 - **Architecture & diagrams:** [docs/architecture/](docs/architecture/)
 
