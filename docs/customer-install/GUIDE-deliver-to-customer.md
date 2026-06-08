@@ -137,10 +137,15 @@ Self-serve changes split into two speeds (see
 - **Fast path** (config.yaml / receiver.yaml / secrets via `kubectl`) — needs only
   the manifests, which the repo gives them. No image, no build.
 - **Slow path** (SKILL.md / prompt / scripts) — needs an **image rebuild**. For
-  this the customer needs `docker buildx` + push rights to their ECR, then:
+  this the customer needs `docker buildx` + push rights to their ECR. The archive
+  ships a **self-contained `agent/Makefile`** (root of the extracted package), so
+  from that directory:
   ```bash
-  make agent-image AGENT=jira-triage-dc HARNESS=pi REGION=eu-west-1 AGENT_ECR_REPO=triage-agent
+  make agent-image AGENT=jira-triage-dc HARNESS=pi
   ```
+  (Or the raw `docker buildx` sequence in
+  [04b Step 2](04b-deploy-data-center-in-cluster.md#step-2--build-and-push-the-dc-image-raw-docker-no-make)
+  if they'd rather not use `make`.)
 
 **Confirmed for Brisa:** the customer **can build images in-house** (their build
 host has Docker + ECR push). So they are fully self-sufficient from the artifact
@@ -149,11 +154,13 @@ ECR. (If a customer ever *can't* build in-house, the fallback is the managed mod
 — you build + push to their ECR on request — but that contradicts "self-serve
 prompt changes" and doesn't apply here.)
 
-> The `Makefile` at the repo root has lab targets (`make cluster`, `make up`) that
-> reference `workshop/`. If you deliver `agent/` as the repo root, **carry only the
-> `agent-image` target** (or a trimmed Makefile) so they don't see/try the lab
-> bring-up. Easiest: give them a tiny `Makefile` with just `agent-image` +
-> `agent-deploy`, documented in the install guide.
+> **The repo-root `Makefile` (lab bring-up: `make cluster`/`make up`,
+> `workshop/`-coupled) is NOT in the archive** — `git archive … HEAD agent
+> docs/customer-install` only includes `agent/` + `docs/`. The shipped
+> `agent/Makefile` is a separate, self-contained file with just `agent-image`,
+> `test`, and `agent-deploy-dc` — no lab targets, no `workshop/` references. So a
+> `make …` command in the delivered docs resolves against THAT Makefile, run from
+> the extracted root.
 
 ---
 
