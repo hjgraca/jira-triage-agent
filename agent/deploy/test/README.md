@@ -2,18 +2,27 @@
 
 `e2e.sh` drives the **real ingress chain** the agent runs in production —
 CloudFront → NLB → receiver → Kubernetes Job → `run.js` → harness — and asserts
-each link. It's the live counterpart to the unit suites (`agent/runtime/test/`
-for the engine, `agent/agents/jira-triage/tests/` for the skill scripts), which
-run offline with stubs.
+each link. It's the live counterpart to the unit suites (`runtime/test/` for the
+engine, `agents/jira-triage/tests/` for the skill scripts), which run offline
+with stubs.
 
-## Run it
+> **Cloud / CloudFront path only.** This script asserts the CloudFront→NLB chain,
+> which **does not exist** on the Jira **Data Center / in-cluster** deploy (the
+> receiver is a `ClusterIP` Jira reaches directly). It also reads its webhook URL
+> from a Terraform output (`TF_DIR`, default `workshop/terraform`) that is NOT in
+> the delivered package, and `make agent-e2e` is a **lab** Makefile target, also
+> not shipped. For the DC in-cluster path, use the verification in
+> **[../../../docs/customer-install/04b-deploy-data-center-in-cluster.md → Step 6](../../../docs/customer-install/04b-deploy-data-center-in-cluster.md)**
+> (in-cluster reachability + a signed test POST + the real-ticket dry run) instead.
+
+## Run it (Cloud / lab only)
 
 ```bash
-# from the repo root, with kubectl pointed at the cluster
+# from the repo root of the FULL lab repo, kubectl pointed at the cluster:
 make agent-e2e             # full run, stop on first failure
 make agent-e2e-step        # step-by-step: explains + pauses before each stage
 
-# or directly:
+# or directly (set TF_DIR to wherever the CloudFront URL output lives):
 agent/deploy/test/e2e.sh
 agent/deploy/test/e2e.sh --step
 ```

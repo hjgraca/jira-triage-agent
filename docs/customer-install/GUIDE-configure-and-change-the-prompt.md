@@ -9,6 +9,19 @@ context assumed.
 > runs. The Cloud variant (`jira-triage`) is identical in structure — same files,
 > different folder.
 
+> **Paths & `make`, in the delivered package.** You received the agent as an
+> archive whose **root is the `agent/` directory** (it ships with its own
+> `Makefile` and `docs/`). So:
+> - Run every `make …` command **from that extracted root** — the bundled
+>   `Makefile` is right there. (There is no repo-level `Makefile` in your package;
+>   you don't need one.)
+> - Where this guide writes a path like `agent/deploy/k8s/config.yaml`, in your
+>   package it's `deploy/k8s/config.yaml` (drop the leading `agent/` — you're
+>   already inside it). Both refer to the same file.
+> - Prefer not to use `make`? Every `make agent-image …` has an equivalent raw
+>   `docker buildx` sequence in
+>   [04b Step 2](04b-deploy-data-center-in-cluster.md#step-2--build-and-push-the-dc-image-raw-docker-no-make).
+
 ---
 
 ## Part 1 — The mental model (read this once, slowly)
