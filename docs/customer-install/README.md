@@ -39,6 +39,7 @@ Do these in sequence. Each page ends by pointing at the next.
 1. **[Prerequisites](01-prerequisites.md)** — what must exist before you start, and how to read your cluster's OIDC provider.
 2. **[Configure GitLab](02-configure-gitlab.md)** — read-only token, reachability from the cluster, CODEOWNERS for routing.
 3. **[Configure Jira](03-configure-jira.md)** — bot account + token, allowed-value sets, and the trigger. **Covers both Jira Cloud (Automation rule) and Data Center / Server (HMAC webhook).**
+3-DC. **[Configure Jira Data Center](03-configure-jira-data-center.md)** — the **step-by-step admin guide for Jira DC 10.x** (Brisa): bot user, PAT, allowed values, trigger actors, and the trigger (System Webhook vs Automation rule — with the DC signing caveat) + an end-to-end verify. Use this instead of 03 for a DC instance.
 3b. **[Choose your harness](03b-choose-harness.md)** — pick the coding-agent CLI the agent runs on (**pi** or **kiro-cli**, or bring your own). Optional — defaults to pi.
 3c. **[Model authentication](03c-model-authentication.md)** — how each harness authenticates to its LLM (keyless IRSA vs static key), what must line up, and known gaps.
 4. **[Deploy the agent](04-deploy-agent.md)** — terraform (IRSA + CloudFront), build/push the image, fill in manifests, `kubectl apply`, lock the origin, run the pre-launch checklist.

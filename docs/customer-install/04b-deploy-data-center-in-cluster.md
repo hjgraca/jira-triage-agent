@@ -131,15 +131,25 @@ kubectl apply -f agent/deploy/k8s/dc/receiver.yaml         # DC receiver (Cluste
 kubectl -n agents rollout status deploy/agent-receiver
 ```
 
-## Step 5 — Register the Jira system webhook (DC)
+## Step 5 — Register the trigger in Jira (customer admin)
 
-In Jira admin (**System → WebHooks → Create**), per
-[03 Trigger B](03-configure-jira.md#trigger-b--system-webhook-hmac-data-center--server):
+The Jira-side setup (bot user, PAT, allowed values, trigger actors, and the
+trigger itself) is its own step-by-step guide for the DC admin:
+
+→ **[03 — Configure Jira Data Center](03-configure-jira-data-center.md)**
+
+In short, the admin creates either a **System Webhook** or an **Automation rule**
+pointing at:
 
 - **URL:** `http://agent-receiver.agents.svc.cluster.local/jira-webhook`
-- **Secret:** the `WEBHOOK_HMAC_SECRET` value.
-- **Events:** `Issue: created`, `Issue: updated`.
-- **JQL filter:** scope to the project, e.g. `project = OPS`.
+- **Events / condition:** issue created + the `triage` label added.
+- scoped (JQL or rule project) to the test project, e.g. `project = OPS`.
+
+> **Which trigger?** DC system webhooks don't reliably sign requests, so the HMAC
+> path may not work on your version — the DC Jira guide explains how to confirm,
+> and falls back to the Automation-rule + shared-secret path (recommended on DC).
+> The verify step there reads the receiver's `authVia` log line to tell you which
+> path actually fired.
 
 > The in-cluster DNS name resolves from the Jira pods (same cluster). If Jira's
 > egress is itself NetworkPolicy-fenced, allow it to reach the `agents` namespace

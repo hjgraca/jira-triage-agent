@@ -85,10 +85,14 @@ function labelFor(vars) {
 
 async function handleWebhook(req, res, rawBody) {
   // 1. Authenticate via the trigger adapter (constant-time HMAC or shared secret).
-  if (!trigger.authenticate(req.headers, rawBody, { hmac: HMAC_SECRET, sharedSecret: SHARED_SECRET }).ok) {
+  const auth = trigger.authenticate(req.headers, rawBody, { hmac: HMAC_SECRET, sharedSecret: SHARED_SECRET });
+  if (!auth.ok) {
     log({ msg: 'reject', reason: 'unauthenticated' });
     return res.writeHead(401).end('unauthorized');
   }
+  // Which proof satisfied auth ('hmac' | 'shared-secret') — surfaced on the spawn
+  // log so operators can confirm which trigger path is live (see DC Jira setup).
+  const authVia = auth.via;
 
   // 2. Parse (only after auth).
   let payload;
@@ -123,7 +127,7 @@ async function handleWebhook(req, res, rawBody) {
   });
   try {
     const r = await jobCreator(manifest);
-    log({ msg: r.duplicate ? 'duplicate' : 'spawn', label, name, trigger: TRIGGER_NAME, agent: agentDef.name });
+    log({ msg: r.duplicate ? 'duplicate' : 'spawn', label, name, trigger: TRIGGER_NAME, authVia, agent: agentDef.name });
     res.writeHead(200).end('ok');
   } catch (err) {
     // A real API failure — let the trigger retry (5xx).

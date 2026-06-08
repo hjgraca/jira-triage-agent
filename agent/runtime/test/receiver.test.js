@@ -86,6 +86,23 @@ test('duplicate delivery (409 from k8s) is acked 200, not an error', async () =>
   assert.strictEqual(r.status, 200);
 });
 
+test('spawn log records authVia (which proof satisfied auth)', async () => {
+  created = [];
+  const lines = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (s, ...a) => { lines.push(String(s)); return orig(s, ...a); };
+  try {
+    const body = JSON.stringify({ webhookEvent: 'jira:issue_created', user: { accountId: 'X' }, issue: { key: 'KAN-7' } });
+    await post(body, { 'x-hub-signature': sign(body), 'x-atlassian-webhook-identifier': 'wid-7' });
+  } finally {
+    process.stdout.write = orig;
+  }
+  const spawn = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .find((o) => o && o.msg === 'spawn');
+  assert.ok(spawn, 'a spawn line was logged');
+  assert.strictEqual(spawn.authVia, 'hmac');
+});
+
 test('parseEnvList parses NAME=VALUE pairs', () => {
   assert.deepStrictEqual(parseEnvList('A=1,B=2'), [
     { name: 'A', value: '1' },
