@@ -1,4 +1,4 @@
-# Complete Deployment Guide — Jira Triage Agent (Brisa, Jira DC in-cluster)
+# Complete Deployment Guide — Jira Triage Agent (Jira DC in-cluster)
 
 **One document, start to finish.** Everything to take the agent from nothing to a
 working end-to-end triage in the customer's infrastructure: AWS/Bedrock, EKS,
@@ -53,9 +53,9 @@ Fill this table before starting — every placeholder below comes from it:
 | 2 | AWS region | `eu-west-1` | everywhere |
 | 3 | Bedrock model id | `eu.anthropic.claude-sonnet-4-6` | Phase 1, 4 |
 | 4 | ECR repo name | `triage-agent` | Phase 3 |
-| 5 | Jira base URL | `https://jira.brisa.internal` | Phase 5, 6 |
+| 5 | Jira base URL | `https://jira.example.internal` | Phase 5, 6 |
 | 6 | Jira namespace (where Jira pods run) | `jira` | Phase 6 |
-| 7 | GitLab base URL (external, via NAT) | `https://gitlab.brisa.internal` | Phase 4 |
+| 7 | GitLab base URL (external, via NAT) | `https://gitlab.example.internal` | Phase 4 |
 | 8 | Bot username | `triage-bot` | Phase 5, 6 |
 | 9 | Trigger usernames (who may add the label) | `alice,bob` | Phase 6 |
 | 10 | Test project key | `OPS` | Phase 7 |
@@ -440,7 +440,7 @@ agent/
         ingress-netpol.yaml        allow the Jira namespace → receiver
         config.example.yaml        DC config (assignees = usernames)
 docs/customer-install/
-  00-COMPLETE-GUIDE-brisa.md       ← you are here
+  00-COMPLETE-GUIDE.md       ← you are here
   03-configure-jira-data-center.md the DC Jira admin deep-dive
   04b-deploy-data-center-in-cluster.md  the DC deploy deep-dive
   GUIDE-configure-and-change-the-prompt.md  how to change behavior

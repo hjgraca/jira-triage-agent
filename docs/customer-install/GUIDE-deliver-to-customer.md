@@ -1,6 +1,6 @@
 # Delivery Guide — Getting the Agent to the Customer (private repo)
 
-How to hand the agent to Brisa **without exposing your private monorepo** (the
+How to hand the agent to the customer **without exposing your private monorepo** (the
 `workshop/` lab, the HLD, ADRs, internal notes). Written for the chosen model:
 **the customer self-serves changes**, so they need the *code as a living repo*,
 not a one-time file.
@@ -32,7 +32,7 @@ files and contains **no secrets** (only `*.example` templates are committed; rea
 
 ## Delivery model: you hand over an artifact; THEY import it
 
-> **Constraint (Brisa):** you will **not** have access to the customer's GitLab,
+> **Constraint:** you will **not** have access to the customer's GitLab,
 > ECR, or cluster — and don't want it. So **you never push to their side.** You
 > produce a clean, self-contained **artifact** from your repo and hand it across
 > the boundary. The customer imports it into *their* GitLab and builds the image
@@ -56,10 +56,10 @@ files and contains **no secrets** (only `*.example` templates are committed; rea
 cd <your-monorepo>
 git checkout main && git pull --ff-only          # deliver the merged code
 git archive --format=tar.gz \
-  --prefix=brisa-triage-agent/ \
-  -o brisa-triage-agent-$(git rev-parse --short HEAD).tar.gz \
+  --prefix=jira-triage-agent/ \
+  -o jira-triage-agent-$(git rev-parse --short HEAD).tar.gz \
   HEAD agent docs/customer-install
-# → brisa-triage-agent-<sha>.tar.gz   (agent/ + docs/customer-install/ ONLY)
+# → jira-triage-agent-<sha>.tar.gz   (agent/ + docs/customer-install/ ONLY)
 ```
 
 The `<sha>` in the filename is the version — it tells you (and them) exactly which
@@ -72,10 +72,10 @@ slipped in:
 
 ```bash
 # contents (should be ONLY agent/ + docs/customer-install/)
-tar tzf brisa-triage-agent-*.tar.gz | sed 's,brisa-triage-agent/,,' | cut -d/ -f1-2 | sort -u
+tar tzf jira-triage-agent-*.tar.gz | sed 's,jira-triage-agent/,,' | cut -d/ -f1-2 | sort -u
 
 # no secrets / state / private dirs
-tar tzf brisa-triage-agent-*.tar.gz \
+tar tzf jira-triage-agent-*.tar.gz \
   | grep -E "secrets\.yaml$|config\.yaml$|\.tfvars$|tfstate|workshop/|docs/hld|docs/decisions|\.claude/" \
   | grep -v example \
   && echo "STOP: something private slipped in" || echo "clean — only example templates + deliverable ✅"
@@ -101,8 +101,8 @@ Hand them these commands (they're in the install README too). The customer runs
 them on *their* side; you never see their GitLab URL:
 
 ```bash
-tar xzf brisa-triage-agent-<sha>.tar.gz
-cd brisa-triage-agent
+tar xzf jira-triage-agent-<sha>.tar.gz
+cd jira-triage-agent
 git init && git add -A && git commit -m "Import triage agent <sha>"
 git remote add origin <their-gitlab-project-url>     # THEY supply this
 git push -u origin main
@@ -147,7 +147,7 @@ Self-serve changes split into two speeds (see
   [04b Step 2](04b-deploy-data-center-in-cluster.md#step-2--build-and-push-the-dc-image-raw-docker-no-make)
   if they'd rather not use `make`.)
 
-**Confirmed for Brisa:** the customer **can build images in-house** (their build
+**Confirmed for this engagement:** the customer **can build images in-house** (their build
 host has Docker + ECR push). So they are fully self-sufficient from the artifact
 alone — they build the image on their side, and you never need access to their
 ECR. (If a customer ever *can't* build in-house, the fallback is the managed model

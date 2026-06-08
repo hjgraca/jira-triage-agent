@@ -1,7 +1,7 @@
-# Deployment Runbook — Jira Triage Agent → Brisa (Jira DC, in-cluster)
+# Deployment Runbook — Jira Triage Agent (Jira DC, in-cluster)
 
 A sequenced, start-to-finish plan to get the triage agent running and tested
-**end to end** in Brisa's infrastructure. Each step says **who** does it, **what**
+**end to end** in the customer's infrastructure. Each step says **who** does it, **what**
 to run, and the **exit check** that proves the step is done before you move on.
 
 This runbook is for the **Data Center, in-cluster** topology specifically:
