@@ -34,6 +34,12 @@ Full detail: **[01 — Prerequisites](01-prerequisites.md)**.
 
 ## Install order
 
+> **Brisa / Jira Data Center in-cluster?** There is a **single start-to-finish
+> guide** covering everything (AWS, EKS, ECR, image, GitLab, Jira DC, manifests,
+> verification) in one document: **[00 — Complete Guide (Brisa)](00-COMPLETE-GUIDE-brisa.md)**.
+> Follow that top to bottom; the numbered pages below are the per-topic deep-dives
+> it links to.
+
 Do these in sequence. Each page ends by pointing at the next.
 
 1. **[Prerequisites](01-prerequisites.md)** — what must exist before you start, and how to read your cluster's OIDC provider.
