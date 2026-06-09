@@ -2,9 +2,9 @@
 
 **One document, start to finish.** Everything to take the agent from nothing to a
 working end-to-end triage in the customer's infrastructure: AWS/Bedrock, EKS,
-ECR, the image, GitLab, Jira Data Center, the manifests, and the verification.
-No other doc required — the deeper references are linked where useful, but you can
-follow this top to bottom.
+the image (pushed to **Nexus**), GitLab, Jira Data Center, the manifests, and the
+verification. No other doc required — the deeper references are linked where
+useful, but you can follow this top to bottom.
 
 ## The target (what we're building)
 
@@ -52,7 +52,8 @@ Fill this table before starting — every placeholder below comes from it:
 | 1 | EKS cluster name | `devtools` | Phase 2, 4 |
 | 2 | AWS region | `eu-west-1` | everywhere |
 | 3 | Bedrock model id | `eu.anthropic.claude-sonnet-4-6` | Phase 1, 4 |
-| 4 | Image registry + repo (ECR, Nexus, Harbor, …) | `nexus.corp:8891/triage-agent` | Phase 3 |
+| 4 | Nexus registry host + repo path | `nexus.example.internal:8891/triage-agent` | Phase 3 |
+| 4b | Nexus pull/push credentials (user + password/token) | `svc-triage / ••••` | Phase 3, 4 |
 | 5 | Jira base URL | `https://jira.example.internal` | Phase 5, 6 |
 | 6 | Jira namespace (where Jira pods run) | `jira` | Phase 6 |
 | 7 | GitLab base URL (external, via NAT) | `https://gitlab.example.internal` | Phase 4 |
@@ -109,27 +110,26 @@ kubectl get ns        # you should see the Jira namespace and (after Phase 4) ag
 
 ---
 
-# Phase 3 — Build and push the image (any registry)
+# Phase 3 — Build and push the image (Nexus)
 
 The image is built in **three layers** (engine → harness CLI → the one agent),
 `linux/amd64` to match EKS nodes. Build context is the `agent/` directory. It
-pushes to **whatever registry you point it at** — ECR, Sonatype Nexus, Harbor,
-GHCR, Docker Hub, a self-hosted registry. `<#4>` is your full registry + repo
-path (no tag), e.g. `nexus.corp:8891/triage-agent` or
-`111122223333.dkr.ecr.eu-west-1.amazonaws.com/triage-agent`.
+pushes to your **Nexus** Docker (hosted) repository. `<#4>` is the full Nexus
+host + repo path (no tag), e.g. `nexus.example.internal:8891/triage-agent`.
 
-### 3.1 — Log in to your registry
+> The pipeline is registry-agnostic — if you ever push to ECR/Harbor/GHCR instead,
+> the only change is `<#4>` and the login. An ECR convenience exists
+> (`make ecr-login`); everything else below is identical.
+
+### 3.1 — Log in to Nexus
 
 ```bash
-docker login <#4-host>          # your registry's host — it'll prompt for creds
+docker login <#4-host>          # e.g. nexus.example.internal:8891 — prompts for the #4b creds
 ```
-> **ECR?** Use the bundled convenience instead (creates the repo + logs in):
-> ```bash
-> cd agent && make ecr-login REGION=eu-west-1 ECR_REPO=triage-agent && cd ..
-> ```
-> Any other registry (Nexus/Harbor/…): a plain `docker login <host>` is all you
-> need — the cluster must also be able to reach and pull from it (see Phase 4 for
-> the pull-secret if it's private).
+The build host needs **push** access; the cluster needs **pull** access (the
+pull Secret in Phase 4 covers the cluster side). If your Nexus uses a private TLS
+CA, make sure Docker trusts it (the daemon's cert store), or the push/pull fails
+with an x509 error.
 
 ### 3.2 — Build + push (pick ONE)
 
@@ -224,15 +224,17 @@ script already annotated the live SA; this keeps it on re-apply):
 - (already set: `TRIGGER=jira-dc`, `MODEL=eu.anthropic.claude-sonnet-4-6`,
   `AWS_REGION=eu-west-1`, ClusterIP Service)
 - If PATs are disabled (Phase 5.2), append `,JIRA_AUTH_SCHEME=basic` to `RUN_ENV`.
-- **Private registry (Nexus/Harbor/…)?** Create a pull secret and wire it so both
-  the receiver and the run Jobs can pull:
+- **Nexus pull secret (required).** Nexus needs credentials to pull, so create a
+  pull Secret in the `agents` namespace and wire it so both the receiver **and**
+  the run Jobs can pull the image:
   ```bash
   kubectl -n agents create secret docker-registry regcred \
-    --docker-server=<#4-host> --docker-username=<user> --docker-password=<pass>
+    --docker-server=<#4-host> --docker-username=<#4b-user> --docker-password=<#4b-pass>
   ```
-  then uncomment `imagePullSecrets:` (pod spec) **and** `IMAGE_PULL_SECRET=regcred`
-  (env) in `receiver.yaml`. Skip this for public images or ECR pulled via the node
-  role.
+  then in `receiver.yaml` **uncomment** `imagePullSecrets:` (pod spec, name
+  `regcred`) **and** `IMAGE_PULL_SECRET=regcred` (env, so the run Jobs inherit it).
+  Both must point at the same Secret name. (Only ECR-via-node-role or a public
+  registry could skip this — not the Nexus path.)
 
 **`agent/deploy/k8s/base/ingress-netpol.yaml`** — replace `<jira-namespace>` with
 `<#6>`. If that namespace has no `kubernetes.io/metadata.name` label, label it:
