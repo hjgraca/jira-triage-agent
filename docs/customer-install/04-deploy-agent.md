@@ -4,9 +4,9 @@
 > **[04b — Deploy: DC in-cluster](04b-deploy-data-center-in-cluster.md)** instead —
 > it's `kubectl` + one script, no Terraform, no CloudFront. This page (04) is the
 > **Cloud / public-ingress** path. Also note: `make agent-deploy` /
-> `../workshop/…` referenced below are **lab** conveniences and are **not** in the
-> delivered package; the shipped `agent/Makefile` has `agent-image`, `test`, and
-> `agent-deploy-dc`.
+> `../workshop/…` referenced below are **lab** conveniences (the repo-root
+> `Makefile`); for install, use the agent's own `agent/Makefile`, which has
+> `agent-image`, `test`, and `agent-deploy`.
 
 Provision the cloud dependencies, build the image, fill in the manifests, apply,
 lock the webhook origin, and run the pre-launch checklist. This is the
@@ -58,9 +58,12 @@ The image is `linux/amd64` (match it to your node arch). Build context is
 owns its `Dockerfile` under `agent/agents/<name>/`. One agent per image, deployed
 in isolation. Pick the harness — see [Choose your harness](03b-choose-harness.md).
 
+`REPO` is your full registry + repo path — **any registry** (ECR, Nexus, Harbor,
+GHCR, …). `docker login` to it first (for ECR: `aws ecr get-login-password
+--region <region> | docker login --username AWS --password-stdin <acct>.dkr.ecr.<region>.amazonaws.com`).
+
 ```bash
-REPO=<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
-aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin "${REPO%/*}"
+REPO=<your-registry>/triage-agent      # e.g. nexus.corp:8891/triage-agent  or  <acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
 
 # base (engine) → pi (engine + CLI) → jira-triage (one agent).
 docker build -f agent/deploy/docker/base.Dockerfile   -t agent-base:local       agent
@@ -70,18 +73,23 @@ docker push "$REPO:latest"
 # (swap pi.Dockerfile → kiro/opencode; swap the agent Dockerfile for another agent)
 ```
 
-(The one-liner is `make agent-image AGENT=jira-triage HARNESS=pi`.)
+(The one-liner is `make agent-image AGENT=jira-triage HARNESS=pi REGISTRY=$REPO`.)
+
+> **Private registry (Nexus/Harbor/…)?** The cluster also needs to pull it: create
+> a `docker-registry` pull secret in the `agents` namespace and set
+> `imagePullSecrets` + `IMAGE_PULL_SECRET` in `receiver.yaml` (both are commented
+> placeholders there). ECR via the node role needs neither.
 
 ## Step 3 — Fill in the manifests
 
 Copy the templated config/secret and set the placeholders.
 
 ```bash
-cp agent/deploy/k8s/config.example.yaml  agent/deploy/k8s/config.yaml    # fill (see Configure Jira §3)
-cp agent/deploy/k8s/secrets.example.yaml agent/deploy/k8s/secrets.yaml   # fill secrets
+cp agent/deploy/k8s/base/config.example.yaml  agent/deploy/k8s/base/config.yaml    # fill (see Configure Jira §3)
+cp agent/deploy/k8s/base/secrets.example.yaml agent/deploy/k8s/base/secrets.yaml   # fill secrets
 ```
 
-`agent/deploy/k8s/secrets.yaml` — set the credentials. You need the auth secret
+`agent/deploy/k8s/base/secrets.yaml` — set the credentials. You need the auth secret
 for **your** trigger path (and may leave the other as a placeholder):
 
 Keys are **UPPER_SNAKE_CASE** — the run Job loads the secret via `envFrom`, which
@@ -98,11 +106,11 @@ names. Dash-cased keys are silently dropped by the shell (the run would fail
 | `KIRO_API_KEY` *(kiro-cli only)* | from the Kiro portal — pi/opencode ignore it |
 | `ANTHROPIC_API_KEY` *(opencode only)* | your provider key — pi/kiro ignore it |
 
-`agent/deploy/k8s/namespace.yaml` — set the **agent-runner** ServiceAccount
+`agent/deploy/k8s/base/namespace.yaml` — set the **agent-runner** ServiceAccount
 annotation to the `triage_bedrock_role_arn` output from step 1 (the run Jobs use
 it for Bedrock; the receiver needs no cloud creds).
 
-`agent/deploy/k8s/receiver.yaml` — set:
+`agent/deploy/k8s/overlays/aws-cloudfront/receiver.yaml` — set:
 
 - `image:` and the `AGENT_IMAGE` env → your `$REPO:latest` (the receiver stamps
   this into the Jobs it creates — normally its own image).
@@ -120,13 +128,13 @@ it for Bedrock; the receiver needs no cloud creds).
 ## Step 4 — Apply
 
 ```bash
-kubectl apply -f agent/deploy/k8s/namespace.yaml      # ns + 2 ServiceAccounts
-kubectl apply -f agent/deploy/k8s/rbac.yaml           # receiver → create Jobs
-kubectl apply -f agent/deploy/k8s/resourcequota.yaml  # concurrency cap
-kubectl apply -f agent/deploy/k8s/netpol.yaml         # run-pod egress fence
-kubectl apply -f agent/deploy/k8s/config.yaml
-kubectl apply -f agent/deploy/k8s/secrets.yaml
-kubectl apply -f agent/deploy/k8s/receiver.yaml
+kubectl apply -f agent/deploy/k8s/base/namespace.yaml      # ns + 2 ServiceAccounts
+kubectl apply -f agent/deploy/k8s/base/rbac.yaml           # receiver → create Jobs
+kubectl apply -f agent/deploy/k8s/base/resourcequota.yaml  # concurrency cap
+kubectl apply -f agent/deploy/k8s/base/netpol.yaml         # run-pod egress fence
+kubectl apply -f agent/deploy/k8s/base/config.yaml
+kubectl apply -f agent/deploy/k8s/base/secrets.yaml
+kubectl apply -f agent/deploy/k8s/overlays/aws-cloudfront/receiver.yaml
 
 kubectl -n agents rollout status deploy/agent-receiver
 ```

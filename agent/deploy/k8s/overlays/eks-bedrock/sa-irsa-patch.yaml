@@ -1,0 +1,17 @@
+# EKS-ONLY overlay: bind the agent-runner ServiceAccount to the keyless Bedrock
+# IRSA role. Apply this AFTER base/namespace.yaml (it re-applies the same SA with
+# the annotation added). Or just run irsa-bedrock.sh, which annotates the live SA
+# for you and prints the ARN to paste here.
+#
+# This is the ONE EKS-specific manifest. On any other cluster you don't apply it —
+# the model credential comes from a static key in agent-secrets instead
+# (see ../vanilla/README.md).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runner
+  namespace: agents
+  annotations:
+    # REPLACE with the role ARN printed by irsa-bedrock.sh, e.g.
+    #   arn:aws:iam::111122223333:role/<cluster>-triage-bedrock
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/<NAME>-triage-bedrock

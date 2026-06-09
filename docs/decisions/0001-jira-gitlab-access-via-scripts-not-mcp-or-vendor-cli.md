@@ -88,7 +88,7 @@ exist.
 ## Why MCP / vendor CLI is a poor wholesale swap *here specifically*
 
 - **Target is Jira Data Center, not Cloud.** The customer runs
-  **self-hosted Jira DC** on a private network (see `docs/hld/`). Atlassian's
+  **self-hosted Jira DC** on a private network. Atlassian's
   **twg-cli and Remote MCP are Cloud-only** — a non-starter for the actual
   deployment. The scripts point at any base URL (Cloud *or* DC).
 - **The scripts are the Cloud→DC seam.** The port to DC (Basic→Bearer PAT,
@@ -119,6 +119,5 @@ exist.
 - Scripts: `agent/agents/jira-triage/scripts/{jira,gitlab}.sh`
 - Skill / rubric: `agent/agents/jira-triage/SKILL.md`
 - Trust model: [`docs/architecture/README.md#trust-model`](../architecture/README.md#trust-model)
-- DC target deltas: `docs/hld/`
 - Atlassian agent skills: <https://developer.atlassian.com/cloud/twg-cli/agents/skills/>
 - GitLab CLI skills: <https://docs.gitlab.com/cli/skills/>

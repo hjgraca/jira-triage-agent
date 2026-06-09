@@ -1,42 +1,52 @@
-## Self-contained Makefile for the SHIPPED agent (agent/ as the repo root).
+## Self-contained Makefile for the agent (run from the agent/ directory).
 ##
-## This is the customer-facing Makefile: it lives INSIDE the delivered subset
-## (agent/), so `make agent-image …` works from the directory you extracted the
-## handoff archive into. It does NOT build a cluster, GitLab, or anything in the
-## workshop lab — it only builds/pushes the agent image and applies the manifests.
-## (The repo-root Makefile, with the lab bring-up targets, is NOT shipped.)
+## It does NOT build a cluster, GitLab, or anything in the workshop lab — it only
+## builds/pushes the agent image and applies the manifests. (The repo-root
+## Makefile, with the lab bring-up targets, is separate.)
 ##
 ## Run these from the agent/ directory:
-##   make agent-image AGENT=jira-triage-dc HARNESS=pi       # build + push one image
-##   make test                                              # run the unit tests
-##   make agent-deploy-dc                                   # kubectl apply the DC overlay
+##   make agent-image REGISTRY=<host>/<path> AGENT=jira-triage-dc HARNESS=pi   # build + push one image
+##   make test                                                                 # run the unit tests
+##   make agent-deploy [OVERLAY=eks-bedrock]                                    # kubectl apply base (+ overlay)
 ##
-## Build context is THIS directory (agent/); the three Dockerfiles live under
-## deploy/docker/ and agents/<name>/.
+## REGISTRY-AGNOSTIC. The image is pushed to whatever registry REGISTRY points at
+## — ECR, Sonatype Nexus, Harbor, GCR, GHCR, Docker Hub, a self-hosted registry,
+## anything `docker push` can reach. Examples:
+##   REGISTRY=111122223333.dkr.ecr.eu-west-1.amazonaws.com/triage-agent   (ECR)
+##   REGISTRY=nexus.corp.internal:8891/triage-agent                       (Nexus)
+##   REGISTRY=harbor.corp/library/triage-agent                            (Harbor)
+## You must `docker login` to that registry yourself first (for ECR there's a
+## convenience target: `make ecr-login REGION=… ECR_REPO=…`). Build context is
+## THIS directory (agent/); the three Dockerfiles live under deploy/docker/ and
+## agents/<name>/.
 
-REGION         ?= eu-west-1
-AGENT_ECR_REPO ?= triage-agent
 AGENT          ?= jira-triage-dc
 HARNESS        ?= pi
-# Tag encodes agent+harness so distinct combos don't clobber each other in ECR.
+# The registry + repository path to push to — NO tag (the tag is appended below).
+# Override per the examples in the header. Defaults to a bare local repo name so
+# `make agent-image` fails loudly with a push error rather than silently using
+# someone's account.
+REGISTRY       ?= triage-agent
+# Tag encodes agent+harness so distinct combos don't clobber each other.
 # Override to iterate on prompts without a stale cached image, e.g.
 #   make agent-image AGENT_IMAGE_TAG=jira-triage-dc-pi-v2
 AGENT_IMAGE_TAG ?= $(AGENT)-$(HARNESS)
-ACCOUNT_ID  = $(shell aws sts get-caller-identity --query Account --output text)
-AGENT_IMAGE = $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com/$(AGENT_ECR_REPO):$(AGENT_IMAGE_TAG)
+AGENT_IMAGE     ?= $(REGISTRY):$(AGENT_IMAGE_TAG)
 AGENT_BASE_TAG    := agent-base:local
 AGENT_HARNESS_TAG := agent-$(HARNESS):local
 
-.PHONY: agent-image test agent-deploy-dc
+# ECR-only convenience: log in + create the repo. Optional — skip entirely for
+# Nexus/Harbor/etc. (just `docker login` to your registry instead).
+REGION   ?= eu-west-1
+ECR_REPO ?= triage-agent
+
+.PHONY: agent-image ecr-login test agent-deploy
 
 ## Build and push one agent image: AGENT (default jira-triage-dc) x HARNESS (pi).
 ## Three layers: base (engine) -> harness (engine + CLI) -> agent (one agent).
-## Creates the ECR repo if missing. Pins linux/amd64 to match EKS node arch.
+## Pushes to $(AGENT_IMAGE). Pins linux/amd64 to match EKS node arch.
+## Pre-req: you are `docker login`'d to the target registry (see `ecr-login` for ECR).
 agent-image:
-	aws ecr describe-repositories --region $(REGION) --repository-names $(AGENT_ECR_REPO) >/dev/null 2>&1 \
-		|| aws ecr create-repository --region $(REGION) --repository-name $(AGENT_ECR_REPO) >/dev/null
-	aws ecr get-login-password --region $(REGION) \
-		| docker login --username AWS --password-stdin $(ACCOUNT_ID).dkr.ecr.$(REGION).amazonaws.com
 	docker buildx build --platform linux/amd64 \
 		-f deploy/docker/base.Dockerfile -t $(AGENT_BASE_TAG) --load .
 	docker buildx build --platform linux/amd64 \
@@ -47,28 +57,46 @@ agent-image:
 		-t $(AGENT_IMAGE) --push .
 	@echo "Pushed $(AGENT_IMAGE) (agent=$(AGENT), harness=$(HARNESS), linux/amd64)"
 
+## ECR convenience (optional): create the repo if missing + docker login.
+## For any other registry, just `docker login <host>` yourself and skip this.
+ecr-login:
+	@ACCT=$$(aws sts get-caller-identity --query Account --output text); \
+	aws ecr describe-repositories --region $(REGION) --repository-names $(ECR_REPO) >/dev/null 2>&1 \
+		|| aws ecr create-repository --region $(REGION) --repository-name $(ECR_REPO) >/dev/null; \
+	aws ecr get-login-password --region $(REGION) \
+		| docker login --username AWS --password-stdin $$ACCT.dkr.ecr.$(REGION).amazonaws.com; \
+	echo "Logged in to $$ACCT.dkr.ecr.$(REGION).amazonaws.com (repo $(ECR_REPO)). Now:"; \
+	echo "  make agent-image REGISTRY=$$ACCT.dkr.ecr.$(REGION).amazonaws.com/$(ECR_REPO)"
+
 ## Run the unit tests (runtime + the selected agent's script tests). No cluster.
 test:
 	cd runtime && node --test
 	bash agents/$(AGENT)/tests/run.sh
 
-## Apply the Data Center / in-cluster overlay. Prereqs (see
-## docs/customer-install/04b-deploy-data-center-in-cluster.md):
-##   - deploy/k8s/dc/irsa-bedrock.sh has created the IRSA role; its ARN is in namespace.yaml
-##   - deploy/k8s/{secrets,config}.yaml created from the .example templates
-##   - image/AGENT_IMAGE/AUTHORIZED_ACTORS filled in deploy/k8s/dc/receiver.yaml
-agent-deploy-dc:
-	@if [ ! -f deploy/k8s/secrets.yaml ] || [ ! -f deploy/k8s/config.yaml ]; then \
-		echo "Create deploy/k8s/secrets.yaml and deploy/k8s/config.yaml from the .example"; \
-		echo "templates first (see docs/customer-install/04b-…). Then: make agent-deploy-dc"; \
+## Apply the PORTABLE base (works on ANY Kubernetes — EKS, GKE, AKS, on-prem,
+## kind). For keyless Bedrock on EKS, ALSO run the eks-bedrock overlay's
+## irsa-bedrock.sh + apply its SA patch (OVERLAY=eks-bedrock does the patch).
+## Prereqs (see docs/customer-install/04b-deploy-data-center-in-cluster.md):
+##   - deploy/k8s/base/{secrets,config}.yaml created from the .example templates
+##   - image/AGENT_IMAGE/AUTHORIZED_ACTORS filled in deploy/k8s/base/receiver.yaml
+## Usage:
+##   make agent-deploy                      # base only (vanilla / static key)
+##   make agent-deploy OVERLAY=eks-bedrock  # base + EKS IRSA SA annotation
+agent-deploy:
+	@if [ ! -f deploy/k8s/base/secrets.yaml ] || [ ! -f deploy/k8s/base/config.yaml ]; then \
+		echo "Create deploy/k8s/base/secrets.yaml and deploy/k8s/base/config.yaml from the"; \
+		echo ".example templates first (see docs/customer-install/04b-…). Then: make agent-deploy"; \
 	else \
-		kubectl apply -f deploy/k8s/namespace.yaml; \
-		kubectl apply -f deploy/k8s/rbac.yaml; \
-		kubectl apply -f deploy/k8s/resourcequota.yaml; \
-		kubectl apply -f deploy/k8s/netpol.yaml; \
-		kubectl apply -f deploy/k8s/dc/ingress-netpol.yaml; \
-		kubectl apply -f deploy/k8s/config.yaml; \
-		kubectl apply -f deploy/k8s/secrets.yaml; \
-		kubectl apply -f deploy/k8s/dc/receiver.yaml; \
+		kubectl apply -f deploy/k8s/base/namespace.yaml; \
+		kubectl apply -f deploy/k8s/base/rbac.yaml; \
+		kubectl apply -f deploy/k8s/base/resourcequota.yaml; \
+		kubectl apply -f deploy/k8s/base/netpol.yaml; \
+		kubectl apply -f deploy/k8s/base/ingress-netpol.yaml; \
+		kubectl apply -f deploy/k8s/base/config.yaml; \
+		kubectl apply -f deploy/k8s/base/secrets.yaml; \
+		kubectl apply -f deploy/k8s/base/receiver.yaml; \
+		if [ -n "$(OVERLAY)" ] && [ -f deploy/k8s/overlays/$(OVERLAY)/sa-irsa-patch.yaml ]; then \
+			kubectl apply -f deploy/k8s/overlays/$(OVERLAY)/sa-irsa-patch.yaml; \
+		fi; \
 		kubectl -n agents rollout status deploy/agent-receiver; \
 	fi

@@ -41,12 +41,10 @@ See [runtime/harness/README.md](runtime/harness/README.md) and
 
 Full step-by-step: **[../docs/customer-install/](../docs/customer-install/)**.
 
-> **If you received this as a delivered package** (an archive whose root is this
-> `agent/` directory): you have a self-contained **`Makefile`** right here —
-> `make agent-image AGENT=jira-triage-dc HARNESS=pi`, `make test`,
-> `make agent-deploy-dc`. Run them from this directory. Paths in the docs written
-> as `agent/deploy/...` are `deploy/...` for you (drop the leading `agent/`). For
-> **Jira Data Center, in-cluster** (the common case), follow
+> **This directory has a self-contained `Makefile`** — `make agent-image
+> AGENT=jira-triage-dc HARNESS=pi REGISTRY=<host>/<repo>`, `make test`,
+> `make agent-deploy [OVERLAY=eks-bedrock]`. Run them from here (`cd agent`).
+> For **Jira Data Center, in-cluster** (the common case), follow
 > **[04b — Deploy: DC in-cluster](../docs/customer-install/04b-deploy-data-center-in-cluster.md)**
 > and **[03 — Configure Jira Data Center](../docs/customer-install/03-configure-jira-data-center.md)**,
 > NOT the Cloud/terraform quickstart below.

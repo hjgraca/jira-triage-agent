@@ -36,12 +36,12 @@ Corporate net ─VPN─ Transit Gateway ─ VPC (EKS "devtools" cluster)
 ## Tools you need on your machine
 
 ```bash
-kubectl version --client && aws --version && eksctl version \
+kubectl version --client && aws --version \
   && docker buildx version && jq --version && openssl version
 ```
 - `kubectl` (matching the cluster), `aws` CLI v2 (logged into the cluster's
-  account), `eksctl`, `docker` with `buildx`, `jq`, `openssl`.
-- No Terraform needed.
+  account), `docker` with `buildx`, `jq`, `openssl`.
+- **No Terraform** — the one IAM role is created by a small `aws` CLI script.
 
 ## Values to collect FIRST (these unblock everything)
 
@@ -52,7 +52,7 @@ Fill this table before starting — every placeholder below comes from it:
 | 1 | EKS cluster name | `devtools` | Phase 2, 4 |
 | 2 | AWS region | `eu-west-1` | everywhere |
 | 3 | Bedrock model id | `eu.anthropic.claude-sonnet-4-6` | Phase 1, 4 |
-| 4 | ECR repo name | `triage-agent` | Phase 3 |
+| 4 | Image registry + repo (ECR, Nexus, Harbor, …) | `nexus.corp:8891/triage-agent` | Phase 3 |
 | 5 | Jira base URL | `https://jira.example.internal` | Phase 5, 6 |
 | 6 | Jira namespace (where Jira pods run) | `jira` | Phase 6 |
 | 7 | GitLab base URL (external, via NAT) | `https://gitlab.example.internal` | Phase 4 |
@@ -82,22 +82,21 @@ You should see the model id, and the console shows **Access granted**.
 
 The agent calls Bedrock via IRSA: the `agent-runner` ServiceAccount assumes an
 IAM role whose policy is scoped to exactly one model. This is the **only** cloud
-resource. From the repo (or the extracted package) root:
+resource. From the repo root:
 
 ```bash
 CLUSTER=<#1> REGION=eu-west-1 \
-  agent/deploy/k8s/dc/irsa-bedrock.sh
+  agent/deploy/k8s/overlays/eks-bedrock/irsa-bedrock.sh
 ```
 
-It creates the least-privilege policy (scoped to the model, never `*`), associates
-the cluster OIDC provider if needed, binds the role to `agents:agent-runner`, and
-prints:
+It creates the least-privilege policy (scoped to the model, never `*`),
+associates the cluster OIDC provider if needed, binds the role to
+`agents:agent-runner`, and prints:
 ```
 ✅ IRSA role ready:
    arn:aws:iam::<acct>:role/<cluster>-triage-bedrock
 ```
-**Record that ARN** — it goes into `namespace.yaml` in Phase 4. (No `eksctl`? the
-script prints a raw-`aws iam` fallback.)
+**Record that ARN** — it goes into `namespace.yaml` in Phase 4.
 
 ---
 
@@ -110,33 +109,41 @@ kubectl get ns        # you should see the Jira namespace and (after Phase 4) ag
 
 ---
 
-# Phase 3 — Build and push the image to ECR
+# Phase 3 — Build and push the image (any registry)
 
 The image is built in **three layers** (engine → harness CLI → the one agent),
-`linux/amd64` to match EKS nodes. Build context is the `agent/` directory.
+`linux/amd64` to match EKS nodes. Build context is the `agent/` directory. It
+pushes to **whatever registry you point it at** — ECR, Sonatype Nexus, Harbor,
+GHCR, Docker Hub, a self-hosted registry. `<#4>` is your full registry + repo
+path (no tag), e.g. `nexus.corp:8891/triage-agent` or
+`111122223333.dkr.ecr.eu-west-1.amazonaws.com/triage-agent`.
 
-### 3.1 — Log in to ECR + ensure the repo exists
+### 3.1 — Log in to your registry
 
 ```bash
-ACCT=$(aws sts get-caller-identity --query Account --output text)
-REGION=eu-west-1
-REPO=$ACCT.dkr.ecr.$REGION.amazonaws.com/<#4>
-aws ecr describe-repositories --repository-names <#4> --region $REGION >/dev/null 2>&1 \
-  || aws ecr create-repository --repository-name <#4> --region $REGION >/dev/null
-aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "${REPO%/*}"
+docker login <#4-host>          # your registry's host — it'll prompt for creds
 ```
+> **ECR?** Use the bundled convenience instead (creates the repo + logs in):
+> ```bash
+> cd agent && make ecr-login REGION=eu-west-1 ECR_REPO=triage-agent && cd ..
+> ```
+> Any other registry (Nexus/Harbor/…): a plain `docker login <host>` is all you
+> need — the cluster must also be able to reach and pull from it (see Phase 4 for
+> the pull-secret if it's private).
 
 ### 3.2 — Build + push (pick ONE)
 
 **Option A — the shipped Makefile** (from the `agent/` directory):
 ```bash
 cd agent
-make agent-image AGENT=jira-triage-dc HARNESS=pi REGION=eu-west-1 AGENT_ECR_REPO=<#4>
+make agent-image AGENT=jira-triage-dc HARNESS=pi REGISTRY=<#4>
 cd ..
+# → pushes <#4>:jira-triage-dc-pi
 ```
 
 **Option B — raw docker** (no `make`):
 ```bash
+REPO=<#4>
 docker buildx build --platform linux/amd64 \
   -f agent/deploy/docker/base.Dockerfile -t agent-base:local --load agent
 docker buildx build --platform linux/amd64 \
@@ -145,11 +152,9 @@ docker buildx build --platform linux/amd64 \
   -f agent/agents/jira-triage-dc/Dockerfile --build-arg BASE=agent-pi:local -t "$REPO:jira-triage-dc-pi" --push agent
 ```
 
-**Verify:**
+**Verify** the tag is in the registry (registry-agnostic):
 ```bash
-aws ecr describe-images --repository-name <#4> --region eu-west-1 \
-  --query "imageDetails[?contains(imageTags,'jira-triage-dc-pi')].imageTags" --output text
-# → jira-triage-dc-pi
+docker buildx imagetools inspect <#4>:jira-triage-dc-pi >/dev/null && echo "pushed ✅"
 ```
 
 > **Iterating later?** The tag is fixed, and Kubernetes caches fixed tags
@@ -174,8 +179,8 @@ feature touches). Never give it a write or full-API token.
 ### 4.2 (YOU) — Create the config and secret files from templates
 
 ```bash
-cp agent/deploy/k8s/dc/config.example.yaml agent/deploy/k8s/config.yaml
-cp agent/deploy/k8s/secrets.example.yaml   agent/deploy/k8s/secrets.yaml
+cp agent/deploy/k8s/base/config.dc.example.yaml agent/deploy/k8s/base/config.yaml
+cp agent/deploy/k8s/base/secrets.example.yaml   agent/deploy/k8s/base/secrets.yaml
 ```
 (Both are gitignored — they hold real values and never get committed.)
 
@@ -190,7 +195,7 @@ fill both with `openssl rand -hex 32` values — extra ones are ignored.)
 
 ### 4.4 — Edit the four files
 
-**`agent/deploy/k8s/secrets.yaml`** — the only long-lived credentials:
+**`agent/deploy/k8s/base/secrets.yaml`** — the only long-lived credentials:
 | Key | Value |
 |---|---|
 | `JIRA_API_TOKEN` | the bot **PAT** from Phase 5.2 |
@@ -199,24 +204,37 @@ fill both with `openssl rand -hex 32` values — extra ones are ignored.)
 | `WEBHOOK_HMAC_SECRET` | the 4.3 value (System-Webhook path) |
 | `AUTOMATION_SHARED_SECRET` | the 4.3 value (Automation-rule path) |
 
-**`agent/deploy/k8s/config.yaml`** — what the agent is ALLOWED to write (it fails
+**`agent/deploy/k8s/base/config.yaml`** — what the agent is ALLOWED to write (it fails
 closed — anything not listed is refused). Fill from real values you read in
 Phase 5.3. `assignees` are **DC usernames** (or leave `[]` so it only recommends).
 
-**`agent/deploy/k8s/namespace.yaml`** — set the `agent-runner` SA annotation:
+**`agent/deploy/k8s/overlays/eks-bedrock/sa-irsa-patch.yaml`** — set the
+`agent-runner` SA annotation to the role ARN from Phase 1.2 (the `irsa-bedrock.sh`
+script already annotated the live SA; this keeps it on re-apply):
 ```yaml
     eks.amazonaws.com/role-arn: <the role ARN from Phase 1.2>
 ```
+(On a non-EKS cluster you skip this — the model credential is a static key in
+`secrets.yaml` instead; see `overlays/vanilla/README.md`.)
 
-**`agent/deploy/k8s/dc/receiver.yaml`** — set:
-- `image:` and `AGENT_IMAGE` → `<#4 repo>:jira-triage-dc-pi` (both, same value)
+**`agent/deploy/k8s/base/receiver.yaml`** — set:
+- `image:` and `AGENT_IMAGE` → `<#4>:jira-triage-dc-pi` (both, same value)
 - in `RUN_ENV`, `GITLAB_BASE_URL=<#7>` (the external GitLab HTTPS URL)
 - `AUTHORIZED_ACTORS` → `<#9>` (DC usernames allowed to trigger)
 - (already set: `TRIGGER=jira-dc`, `MODEL=eu.anthropic.claude-sonnet-4-6`,
   `AWS_REGION=eu-west-1`, ClusterIP Service)
 - If PATs are disabled (Phase 5.2), append `,JIRA_AUTH_SCHEME=basic` to `RUN_ENV`.
+- **Private registry (Nexus/Harbor/…)?** Create a pull secret and wire it so both
+  the receiver and the run Jobs can pull:
+  ```bash
+  kubectl -n agents create secret docker-registry regcred \
+    --docker-server=<#4-host> --docker-username=<user> --docker-password=<pass>
+  ```
+  then uncomment `imagePullSecrets:` (pod spec) **and** `IMAGE_PULL_SECRET=regcred`
+  (env) in `receiver.yaml`. Skip this for public images or ECR pulled via the node
+  role.
 
-**`agent/deploy/k8s/dc/ingress-netpol.yaml`** — replace `<jira-namespace>` with
+**`agent/deploy/k8s/base/ingress-netpol.yaml`** — replace `<jira-namespace>` with
 `<#6>`. If that namespace has no `kubernetes.io/metadata.name` label, label it:
 ```bash
 kubectl label namespace <#6> kubernetes.io/metadata.name=<#6> --overwrite
@@ -224,11 +242,11 @@ kubectl label namespace <#6> kubernetes.io/metadata.name=<#6> --overwrite
 
 **Validate before applying:**
 ```bash
-for f in agent/deploy/k8s/dc/*.yaml agent/deploy/k8s/config.yaml agent/deploy/k8s/namespace.yaml; do
+for f in agent/deploy/k8s/base/*.yaml agent/deploy/k8s/base/config.yaml agent/deploy/k8s/base/namespace.yaml; do
   kubectl apply --dry-run=client -f "$f" >/dev/null && echo "ok $f"; done
-grep -RN "REPLACE_ME\|<ACCT>\|<jira-namespace>\|<your-gitlab-host>\|<dc-username\|<#" \
-  agent/deploy/k8s/config.yaml agent/deploy/k8s/secrets.yaml agent/deploy/k8s/namespace.yaml \
-  agent/deploy/k8s/dc/receiver.yaml agent/deploy/k8s/dc/ingress-netpol.yaml \
+grep -RN "REPLACE_ME\|<REGISTRY>\|<ACCT>\|<ACCOUNT_ID>\|<NAME>\|<jira-namespace>\|<your-gitlab-host>\|<dc-username\|<#" \
+  agent/deploy/k8s/base/config.yaml agent/deploy/k8s/base/secrets.yaml agent/deploy/k8s/base/namespace.yaml \
+  agent/deploy/k8s/base/receiver.yaml agent/deploy/k8s/base/ingress-netpol.yaml \
   && echo "↑ placeholders still present — fix them" || echo "no placeholders left ✅"
 ```
 
@@ -271,18 +289,22 @@ Record the exact (case-sensitive) priority names, issue types, and transition id
 ### 6.1 (YOU) — Apply the manifests, in order
 
 ```bash
-kubectl apply -f agent/deploy/k8s/namespace.yaml      # ns + 2 ServiceAccounts (agent-runner has the IRSA annotation)
-kubectl apply -f agent/deploy/k8s/rbac.yaml           # receiver may create Jobs
-kubectl apply -f agent/deploy/k8s/resourcequota.yaml  # concurrency cap
-kubectl apply -f agent/deploy/k8s/netpol.yaml         # run-pod egress fence
-kubectl apply -f agent/deploy/k8s/dc/ingress-netpol.yaml   # receiver ingress: allow the Jira ns
-kubectl apply -f agent/deploy/k8s/config.yaml         # allowed-value sets
-kubectl apply -f agent/deploy/k8s/secrets.yaml        # credentials
-kubectl apply -f agent/deploy/k8s/dc/receiver.yaml    # the receiver (ClusterIP, TRIGGER=jira-dc)
+# base — works on ANY Kubernetes
+kubectl apply -f agent/deploy/k8s/base/namespace.yaml      # ns + 2 ServiceAccounts (no cloud annotation)
+kubectl apply -f agent/deploy/k8s/base/rbac.yaml           # receiver may create Jobs
+kubectl apply -f agent/deploy/k8s/base/resourcequota.yaml  # concurrency cap
+kubectl apply -f agent/deploy/k8s/base/netpol.yaml         # run-pod egress fence
+kubectl apply -f agent/deploy/k8s/base/ingress-netpol.yaml   # receiver ingress: allow the Jira ns
+kubectl apply -f agent/deploy/k8s/base/config.yaml         # allowed-value sets
+kubectl apply -f agent/deploy/k8s/base/secrets.yaml        # credentials
+kubectl apply -f agent/deploy/k8s/base/receiver.yaml       # the receiver (ClusterIP, TRIGGER=jira-dc)
+
+# EKS keyless-Bedrock identity overlay (binds the agent-runner SA to the IRSA role)
+kubectl apply -f agent/deploy/k8s/overlays/eks-bedrock/sa-irsa-patch.yaml
 
 kubectl -n agents rollout status deploy/agent-receiver
 ```
-(Or, from `agent/`: `make agent-deploy-dc` runs the same sequence.)
+(Or, from `agent/`: `make agent-deploy OVERLAY=eks-bedrock` runs the same sequence.)
 
 **Verify the receiver is up:**
 ```bash
@@ -383,11 +405,11 @@ sets, and the `triage` label **removed**.
 
 Two speeds (full guide: [GUIDE-configure-and-change-the-prompt.md](GUIDE-configure-and-change-the-prompt.md)):
 
-- **Fast (no rebuild):** edit `config.yaml` (allowed values) or `dc/receiver.yaml`
+- **Fast (no rebuild):** edit `config.yaml` (allowed values) or `base/receiver.yaml`
   env → `kubectl apply` (+ `rollout restart` for receiver env). The next run uses it.
 - **Slow (rebuild):** edit `agents/jira-triage-dc/SKILL.md` (the prompt/rubric) or
   the `scripts/*.sh` → rebuild the image **with a bumped tag** → update both image
-  refs in `dc/receiver.yaml` → `kubectl apply` + `rollout restart`.
+  refs in `base/receiver.yaml` → `kubectl apply` + `rollout restart`.
 
 Test changes locally without a cluster:
 ```bash
@@ -403,7 +425,7 @@ cd agent && make test        # or: (cd runtime && node --test) && bash agents/ji
 | Stop new runs now | `kubectl -n agents scale deploy/agent-receiver --replicas=0` |
 | Stop deliveries | disable the Jira Automation rule / system webhook |
 | Remove the agent | `kubectl delete ns agents` |
-| Remove the IAM role | `eksctl delete iamserviceaccount --cluster <#1> --namespace agents --name agent-runner` (then delete the policy if unused) |
+| Remove the IAM role | `aws iam detach-role-policy --role-name <#1>-triage-bedrock --policy-arn <policy-arn>` then `aws iam delete-role --role-name <#1>-triage-bedrock` (and `delete-policy` if unused) |
 
 The agent only **reads** GitLab and writes to tickets within allowed-value sets —
 rollback has no data-loss surface beyond comments/labels on test tickets.
@@ -422,27 +444,48 @@ rollback has no data-loss surface beyond comments/labels on test tickets.
 
 ---
 
+# Critical path — what blocks what
+
+```
+Values ─┬─ Phase 1.1 Bedrock access ────────┐
+        ├─ Phase 1.2 irsa-bedrock.sh (role) ─┐
+        ├─ Phase 4.1 GitLab token            ├─ 4 fill ─ 6.1 apply ─ 6.2 reach ─ 7 e2e ─ 8 backstops
+        └─ Phase 5 Jira bot/PAT + HMAC ──────┘                       └ 6.3 trigger ┘
+Phase 3 image ──────────────────────────────────────────┘
+```
+
+The two hard, **customer-gated** blockers are **Bedrock access (1.1)** and the
+**Jira bot + PAT (5)** — request both at the very start so they don't stall you.
+The two checks that can only pass against the live instance are **in-cluster
+reachability (6.2)** and **real signature + v2 shapes** (the two items in the
+section just above) — budget time for one fix iteration on each.
+
+---
+
 ## Appendix — the file map
 
 ```
 agent/
-  Makefile                         make agent-image | test | agent-deploy-dc  (ships in the package)
+  Makefile                         make agent-image | test | agent-deploy [OVERLAY=…]  (run from agent/)
   runtime/                         the engine (receiver.js, run.js, trigger/, harness/, lib/)
   agents/jira-triage-dc/           THE DC AGENT — SKILL.md (prompt/rubric), scripts/jira.sh+gitlab.sh
   deploy/
     docker/                        base + pi/kiro/opencode Dockerfiles
-    k8s/                           namespace, rbac, resourcequota, netpol  (shared)
-      config.example.yaml          → copy to config.yaml (allowed values)
-      secrets.example.yaml         → copy to secrets.yaml (credentials)
-      dc/                          THE IN-CLUSTER OVERLAY
-        irsa-bedrock.sh            creates the one IAM role (Phase 1.2)
-        receiver.yaml              ClusterIP receiver, TRIGGER=jira-dc
-        ingress-netpol.yaml        allow the Jira namespace → receiver
-        config.example.yaml        DC config (assignees = usernames)
+    k8s/
+      base/                        WORKS ON ANY KUBERNETES — apply all of these
+        namespace.yaml             ns + 2 ServiceAccounts (no cloud annotation)
+        rbac.yaml resourcequota.yaml netpol.yaml ingress-netpol.yaml
+        receiver.yaml              ClusterIP receiver, TRIGGER=jira-dc (in-cluster)
+        config.example.yaml        → copy to config.yaml (Cloud: accountIds)
+        config.dc.example.yaml     → copy to config.yaml (DC: usernames)
+        secrets.example.yaml       → copy to secrets.yaml (credentials)
+      overlays/                    PICK PER DEPLOY TARGET (apply on top of base/)
+        eks-bedrock/               keyless Bedrock on EKS: irsa-bedrock.sh + sa-irsa-patch.yaml
+        vanilla/                   any other cluster: static model key (README only)
+        aws-cloudfront/            public ingress: LoadBalancer receiver + CloudFront
 docs/customer-install/
   00-COMPLETE-GUIDE.md       ← you are here
   03-configure-jira-data-center.md the DC Jira admin deep-dive
   04b-deploy-data-center-in-cluster.md  the DC deploy deep-dive
   GUIDE-configure-and-change-the-prompt.md  how to change behavior
-  GUIDE-deliver-to-customer.md     how this package was handed over
 ```
