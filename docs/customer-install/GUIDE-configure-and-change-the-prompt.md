@@ -9,7 +9,7 @@ context assumed.
 > (`jira-triage`) is identical in structure — same files, different folder.
 
 > **Paths & `make`.** Paths in this guide are written from the **repo root**
-> (e.g. `agent/deploy/k8s/config.yaml`) — use them as-is from your clone. Run
+> (e.g. `agent/deploy/k8s/base/config.yaml`) — use them as-is from your clone. Run
 > `make agent-image …` from the **`agent/`** directory, where the agent's
 > `Makefile` lives (`cd agent && make …`). Prefer not to use `make`? Every
 > `make agent-image …` has an equivalent raw `docker buildx` sequence in
@@ -53,9 +53,9 @@ it's allowed to write** — that's steps ⑤. Two files control it:
 | You want to change… | Edit this file |
 |---|---|
 | **What the agent does / how it thinks** (its instructions, the rubric) | `agent/agents/jira-triage-dc/SKILL.md` |
-| **What values it's allowed to write** (priorities, labels, assignees, issue types, transitions) | `agent/deploy/k8s/config.yaml` (a Kubernetes ConfigMap) |
-| **Who may trigger it / which model / GitLab URL** | `agent/deploy/k8s/dc/receiver.yaml` (env vars) |
-| **Credentials** (Jira token, GitLab token, webhook secret) | `agent/deploy/k8s/secrets.yaml` |
+| **What values it's allowed to write** (priorities, labels, assignees, issue types, transitions) | `agent/deploy/k8s/base/config.yaml` (a Kubernetes ConfigMap) |
+| **Who may trigger it / which model / GitLab URL** | `agent/deploy/k8s/base/receiver.yaml` (env vars) |
+| **Credentials** (Jira token, GitLab token, webhook secret) | `agent/deploy/k8s/base/secrets.yaml` |
 
 A crucial distinction:
 
@@ -156,8 +156,8 @@ the rubric decides, the config constrains.
 
 ### 3.2 — Allow the new label (config.yaml)
 
-Open `agent/deploy/k8s/config.yaml` (you created it by copying
-`agent/deploy/k8s/dc/config.example.yaml`). Add `docs` to `labels`:
+Open `agent/deploy/k8s/base/config.yaml` (you created it by copying
+`agent/deploy/k8s/base/config.dc.example.yaml`). Add `docs` to `labels`:
 
 ```yaml
 data:
@@ -187,7 +187,7 @@ Now the two-track reality from Part 1 kicks in:
 
 **Fast path (config only):**
 ```bash
-kubectl apply -f agent/deploy/k8s/config.yaml
+kubectl apply -f agent/deploy/k8s/base/config.yaml
 # run Jobs mount this fresh each time, so the NEXT triage uses it. No restart needed.
 ```
 
@@ -214,12 +214,12 @@ Give each build its own tag so there's nothing stale to cache:
 ```bash
 make agent-image AGENT=jira-triage-dc HARNESS=pi REGION=eu-west-1 \
   AGENT_ECR_REPO=triage-agent AGENT_IMAGE_TAG=jira-triage-dc-pi-v2
-# then point BOTH image refs in dc/receiver.yaml at :jira-triage-dc-pi-v2
-kubectl apply -f agent/deploy/k8s/dc/receiver.yaml
+# then point BOTH image refs in base/receiver.yaml at :jira-triage-dc-pi-v2
+kubectl apply -f agent/deploy/k8s/base/receiver.yaml
 kubectl -n agents rollout restart deploy/agent-receiver
 ```
 (The receiver stamps its OWN image into the Jobs it creates via the `AGENT_IMAGE`
-env — that's why **both** `image:` and `AGENT_IMAGE` in `dc/receiver.yaml` must
+env — that's why **both** `image:` and `AGENT_IMAGE` in `base/receiver.yaml` must
 point at the new tag. Change them together.)
 
 **Option B — set `imagePullPolicy: Always`** on the receiver container and on the
@@ -278,12 +278,12 @@ curl -sS "$BASE/rest/api/2/issue/<KEY>?fields=priority,issuetype" \
 curl -sS "$BASE/rest/api/2/issue/<KEY>/transitions" \
   -H "Authorization: Bearer $TOKEN" | jq '.transitions[] | {id,name}'
 ```
-**Apply:** `kubectl apply -f agent/deploy/k8s/config.yaml` (fast path — no rebuild).
+**Apply:** `kubectl apply -f agent/deploy/k8s/base/config.yaml` (fast path — no rebuild).
 
-### B) `dc/receiver.yaml` — behavior knobs (env vars)
+### B) `base/receiver.yaml` — behavior knobs (env vars)
 
 These are plain environment variables on the receiver Deployment. Edit, then
-`kubectl apply -f agent/deploy/k8s/dc/receiver.yaml && kubectl -n agents rollout restart deploy/agent-receiver`.
+`kubectl apply -f agent/deploy/k8s/base/receiver.yaml && kubectl -n agents rollout restart deploy/agent-receiver`.
 
 | Env | What it controls | Notes |
 |---|---|---|
@@ -319,7 +319,7 @@ run fails with "JIRA_* is required".
 | `GITLAB_READ_TOKEN` | Read-only GitLab token | the deploy token |
 | `WEBHOOK_HMAC_SECRET` | Verifies the webhook is really from Jira | `openssl rand -hex 32`; use the SAME value in the Jira webhook's "secret" field |
 
-**Apply:** `kubectl apply -f agent/deploy/k8s/secrets.yaml && kubectl -n agents rollout restart deploy/agent-receiver`.
+**Apply:** `kubectl apply -f agent/deploy/k8s/base/secrets.yaml && kubectl -n agents rollout restart deploy/agent-receiver`.
 
 ### D) `resourcequota.yaml` — how many runs at once
 
@@ -356,13 +356,13 @@ deployment runbook insists on a test project before widening to real projects.
 |---|---|---|---|
 | Change how the agent classifies / its instructions | `agents/jira-triage-dc/SKILL.md` (rubric body) | rebuild + push + new tag + apply receiver | **Yes** |
 | Change the one-line task prompt | `agents/jira-triage-dc/SKILL.md` (`prompt:`) | same as above | **Yes** |
-| Add/remove an allowed label/priority/type/transition | `deploy/k8s/config.yaml` | `kubectl apply -f config.yaml` | No |
-| Add/remove an assignable person | `deploy/k8s/config.yaml` (`assignees`) | `kubectl apply -f config.yaml` | No |
-| Change who can trigger | `deploy/k8s/dc/receiver.yaml` (`AUTHORIZED_ACTORS`) | apply + rollout restart | No |
-| Change the model / region / GitLab URL | `deploy/k8s/dc/receiver.yaml` (`RUN_ENV`) | apply + rollout restart | No |
-| Rotate a token | `deploy/k8s/secrets.yaml` | apply + rollout restart | No |
+| Add/remove an allowed label/priority/type/transition | `deploy/k8s/base/config.yaml` | `kubectl apply -f config.yaml` | No |
+| Add/remove an assignable person | `deploy/k8s/base/config.yaml` (`assignees`) | `kubectl apply -f config.yaml` | No |
+| Change who can trigger | `deploy/k8s/base/receiver.yaml` (`AUTHORIZED_ACTORS`) | apply + rollout restart | No |
+| Change the model / region / GitLab URL | `deploy/k8s/base/receiver.yaml` (`RUN_ENV`) | apply + rollout restart | No |
+| Rotate a token | `deploy/k8s/base/secrets.yaml` | apply + rollout restart | No |
 | Change a bundled script (jira.sh/gitlab.sh) | `agents/jira-triage-dc/scripts/*.sh` | rebuild + push + new tag + apply | **Yes** |
-| Allow more concurrent runs | `deploy/k8s/resourcequota.yaml` | `kubectl apply` | No |
+| Allow more concurrent runs | `deploy/k8s/base/resourcequota.yaml` | `kubectl apply` | No |
 
 **The single most useful habit:** when a change "doesn't take effect," ask first
 *"did this need an image rebuild, and did I bump the tag?"* (Part 3.4). That one

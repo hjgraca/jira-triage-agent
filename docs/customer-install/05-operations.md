@@ -114,12 +114,12 @@ schedule (≤90 days):
 
 1. Revoke the old credential at the source.
 2. Generate the new one.
-3. Update `agent/deploy/k8s/secrets.yaml` (and, for the **HMAC** path, the Jira
+3. Update `agent/deploy/k8s/base/secrets.yaml` (and, for the **HMAC** path, the Jira
    system-webhook secret to match).
 4. Apply, and roll the receiver (run Jobs read the Secret fresh each time, so they
    need no roll):
    ```bash
-   kubectl apply -f agent/deploy/k8s/secrets.yaml
+   kubectl apply -f agent/deploy/k8s/base/secrets.yaml
    kubectl -n agents rollout restart deploy/agent-receiver
    ```
 

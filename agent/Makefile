@@ -7,7 +7,7 @@
 ## Run these from the agent/ directory:
 ##   make agent-image REGISTRY=<host>/<path> AGENT=jira-triage-dc HARNESS=pi   # build + push one image
 ##   make test                                                                 # run the unit tests
-##   make agent-deploy-dc                                                       # kubectl apply the DC overlay
+##   make agent-deploy [OVERLAY=eks-bedrock]                                    # kubectl apply base (+ overlay)
 ##
 ## REGISTRY-AGNOSTIC. The image is pushed to whatever registry REGISTRY points at
 ## — ECR, Sonatype Nexus, Harbor, GCR, GHCR, Docker Hub, a self-hosted registry,
@@ -40,7 +40,7 @@ AGENT_HARNESS_TAG := agent-$(HARNESS):local
 REGION   ?= eu-west-1
 ECR_REPO ?= triage-agent
 
-.PHONY: agent-image ecr-login test agent-deploy-dc
+.PHONY: agent-image ecr-login test agent-deploy agent-deploy-dc
 
 ## Build and push one agent image: AGENT (default jira-triage-dc) x HARNESS (pi).
 ## Three layers: base (engine) -> harness (engine + CLI) -> agent (one agent).
@@ -73,23 +73,33 @@ test:
 	cd runtime && node --test
 	bash agents/$(AGENT)/tests/run.sh
 
-## Apply the Data Center / in-cluster overlay. Prereqs (see
-## docs/customer-install/04b-deploy-data-center-in-cluster.md):
-##   - deploy/k8s/dc/irsa-bedrock.sh has created the IRSA role; its ARN is in namespace.yaml
-##   - deploy/k8s/{secrets,config}.yaml created from the .example templates
-##   - image/AGENT_IMAGE/AUTHORIZED_ACTORS filled in deploy/k8s/dc/receiver.yaml
-agent-deploy-dc:
-	@if [ ! -f deploy/k8s/secrets.yaml ] || [ ! -f deploy/k8s/config.yaml ]; then \
-		echo "Create deploy/k8s/secrets.yaml and deploy/k8s/config.yaml from the .example"; \
-		echo "templates first (see docs/customer-install/04b-…). Then: make agent-deploy-dc"; \
+## Apply the PORTABLE base (works on ANY Kubernetes — EKS, GKE, AKS, on-prem,
+## kind). For keyless Bedrock on EKS, ALSO run the eks-bedrock overlay's
+## irsa-bedrock.sh + apply its SA patch (OVERLAY=eks-bedrock does the patch).
+## Prereqs (see docs/customer-install/04b-deploy-data-center-in-cluster.md):
+##   - deploy/k8s/base/{secrets,config}.yaml created from the .example templates
+##   - image/AGENT_IMAGE/AUTHORIZED_ACTORS filled in deploy/k8s/base/receiver.yaml
+## Usage:
+##   make agent-deploy                      # base only (vanilla / static key)
+##   make agent-deploy OVERLAY=eks-bedrock  # base + EKS IRSA SA annotation
+agent-deploy:
+	@if [ ! -f deploy/k8s/base/secrets.yaml ] || [ ! -f deploy/k8s/base/config.yaml ]; then \
+		echo "Create deploy/k8s/base/secrets.yaml and deploy/k8s/base/config.yaml from the"; \
+		echo ".example templates first (see docs/customer-install/04b-…). Then: make agent-deploy"; \
 	else \
-		kubectl apply -f deploy/k8s/namespace.yaml; \
-		kubectl apply -f deploy/k8s/rbac.yaml; \
-		kubectl apply -f deploy/k8s/resourcequota.yaml; \
-		kubectl apply -f deploy/k8s/netpol.yaml; \
-		kubectl apply -f deploy/k8s/dc/ingress-netpol.yaml; \
-		kubectl apply -f deploy/k8s/config.yaml; \
-		kubectl apply -f deploy/k8s/secrets.yaml; \
-		kubectl apply -f deploy/k8s/dc/receiver.yaml; \
+		kubectl apply -f deploy/k8s/base/namespace.yaml; \
+		kubectl apply -f deploy/k8s/base/rbac.yaml; \
+		kubectl apply -f deploy/k8s/base/resourcequota.yaml; \
+		kubectl apply -f deploy/k8s/base/netpol.yaml; \
+		kubectl apply -f deploy/k8s/base/ingress-netpol.yaml; \
+		kubectl apply -f deploy/k8s/base/config.yaml; \
+		kubectl apply -f deploy/k8s/base/secrets.yaml; \
+		kubectl apply -f deploy/k8s/base/receiver.yaml; \
+		if [ -n "$(OVERLAY)" ] && [ -f deploy/k8s/overlays/$(OVERLAY)/sa-irsa-patch.yaml ]; then \
+			kubectl apply -f deploy/k8s/overlays/$(OVERLAY)/sa-irsa-patch.yaml; \
+		fi; \
 		kubectl -n agents rollout status deploy/agent-receiver; \
 	fi
+
+## Back-compat alias.
+agent-deploy-dc: agent-deploy

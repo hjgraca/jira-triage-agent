@@ -27,7 +27,7 @@ GitLab → **Project (or Group) → Settings → Repository → Deploy tokens**:
 
 ## 2. Make GitLab reachable from the cluster
 
-Set `GITLAB_BASE_URL` (in `agent/deploy/k8s/receiver.yaml`) to a URL the pod can
+Set `GITLAB_BASE_URL` (in `agent/deploy/k8s/overlays/aws-cloudfront/receiver.yaml`) to a URL the pod can
 reach:
 
 - **In-cluster GitLab:** use the Service DNS, including the port. In the workshop

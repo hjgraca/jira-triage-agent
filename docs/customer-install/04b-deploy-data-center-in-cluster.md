@@ -37,12 +37,12 @@ Corporate net ─VPN─ Transit Gateway ─ VPC (EKS devtools)
 | Jira auth | Basic `email:token` | **Bearer PAT** (`JIRA_AUTH_SCHEME=basic` to fall back) |
 | Actors / assignees | accountIds | **DC usernames** (`user.name`) |
 | GitLab | in-cluster or external | **external via NAT** (`https://…`) |
-| Cloud provisioning | Terraform (IRSA + CloudFront) | **one script** (`dc/irsa-bedrock.sh`) — no Terraform |
+| Cloud provisioning | Terraform (IRSA + CloudFront) | **one script** (`overlays/eks-bedrock/irsa-bedrock.sh`) — no Terraform |
 | Extra manifest | — | **ingress NetworkPolicy** (allow the Jira namespace) |
 
 **CloudFront, the LBC, the prefix-list origin lock, and the
 [webhook-URL-drift footgun](05-operations.md) all go away** on this path. It's
-`kubectl` + `docker` + one small script (`dc/irsa-bedrock.sh` for the single
+`kubectl` + `docker` + one small script (`overlays/eks-bedrock/irsa-bedrock.sh` for the single
 Bedrock IAM role) — no Terraform state, no providers, no tfvars, nothing to stand
 up in a cluster you already operate.
 
@@ -52,9 +52,9 @@ Everything below is in [00 — Complete Guide](00-COMPLETE-GUIDE.md), by phase:
 
 | Step | In the Complete Guide |
 |---|---|
-| Bedrock IRSA role (`dc/irsa-bedrock.sh`, no Terraform) | Phase 1 |
+| Bedrock IRSA role (`overlays/eks-bedrock/irsa-bedrock.sh`, no Terraform) | Phase 1 |
 | Build + push the **`jira-triage-dc`** image | Phase 3 |
-| Fill the DC overlay manifests (`agent/deploy/k8s/dc/`) | Phase 4 |
+| Fill the DC overlay manifests (`agent/deploy/k8s/base/` + `overlays/`) | Phase 4 |
 | Apply, in order (incl. the ingress NetworkPolicy) | Phase 6.1 |
 | In-cluster reachability + the trigger | Phase 6.2–6.3 |
 | The two live-only checks (does DC sign? do v2 shapes match?) | Phase 7 + "Two things only a live instance can confirm" |

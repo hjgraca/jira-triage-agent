@@ -1,20 +1,21 @@
-# DATA CENTER / in-cluster receiver overlay.
+# BASE receiver — in-cluster (ClusterIP), works on ANY Kubernetes.
 #
-# Use this INSTEAD OF ../receiver.yaml when Jira reaches the receiver from INSIDE
-# the same cluster (the in-cluster case: Jira DC runs in another namespace on the same
-# EKS). There is NO internet exposure here — so the whole CloudFront + public NLB
-# + LBC + prefix-list origin-lock story from ../receiver.yaml is dropped, and the
-# Service is a plain ClusterIP. Jira posts to the in-cluster DNS name:
+# This is the default: the input source (Jira DC, or any in-cluster poster)
+# reaches the receiver over in-cluster DNS, so there is NO internet exposure and
+# no load balancer. Posts go to:
 #
 #     http://agent-receiver.agents.svc.cluster.local/jira-webhook
 #
-# Everything else (stateless receiver, run-as-Job, RBAC, IRSA→Bedrock) is the
-# same as the Cloud path. The two DC-specific changes vs ../receiver.yaml are:
+# Configured here for the Jira Data Center in-cluster case:
 #   1. TRIGGER=jira-dc          (actor by user.name/key; DC-shaped dedupe)
 #   2. Service type: ClusterIP  (no LB annotations, no loadBalancerClass)
+# Swap TRIGGER for another input (jira / github / generic) as needed.
 #
-# Pair this with dc/ingress-netpol.yaml (lets the Jira namespace reach :8080) and
-# the jira-triage-dc agent image (REST v2 / Bearer PAT / wiki comments).
+# Need PUBLIC ingress (Jira Cloud / external SaaS webhook)? Use
+# overlays/aws-cloudfront/receiver.yaml instead (LoadBalancer + CloudFront).
+#
+# Pair this with base/ingress-netpol.yaml (lets the input namespace reach :8080)
+# and the matching agent image (e.g. jira-triage-dc → REST v2 / Bearer PAT).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -67,11 +68,12 @@ spec:
             # the kubelet can pull the run-Job image. Match the imagePullSecrets name.
             # Leave unset/empty for public images or ECR via the node role.
             # - { name: IMAGE_PULL_SECRET, value: "regcred" }
-            # Non-secret env for each run Job. pi → keyless Bedrock via IRSA.
-            # MODEL + AWS_REGION MUST match the model/region the IRSA policy was
-            # scoped to in dc/irsa-bedrock.sh (eu profile, eu-west-1) or Bedrock
-            # denies InvokeModel (AccessDenied). GITLAB_BASE_URL is the EXTERNAL
-            # GitLab URL reached via NAT (HTTPS).
+            # Non-secret env for each run Job. pi → keyless Bedrock via IRSA
+            # (EKS: apply overlays/eks-bedrock). On any other cluster use a
+            # key-based harness (HARNESS=opencode|kiro-cli, see overlays/vanilla).
+            # For pi, MODEL + AWS_REGION MUST match what overlays/eks-bedrock/
+            # irsa-bedrock.sh scoped the policy to or Bedrock denies InvokeModel.
+            # GITLAB_BASE_URL is the EXTERNAL GitLab URL (HTTPS).
             - { name: RUN_ENV, value: "HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE_URL=https://<your-gitlab-host>" }
             # Run Jobs load creds themselves (envFrom) — the receiver never sees them.
             - { name: RUN_SECRET, value: "agent-secrets" }

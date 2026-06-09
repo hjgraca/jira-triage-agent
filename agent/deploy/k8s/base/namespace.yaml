@@ -1,0 +1,32 @@
+# Namespace + two ServiceAccounts for the agent (run-as-Job model).
+# PORTABLE — works on any Kubernetes (EKS, GKE, AKS, on-prem, kind).
+#
+#   agent-receiver — used by the receiver Deployment. Needs RBAC to create Jobs
+#                    (rbac.yaml). No cloud creds needed for the receiver itself.
+#   agent-runner   — used by each run Job's pod. The model credential reaches it
+#                    one of two ways, depending on your deploy target:
+#                      • EKS keyless (recommended): apply overlays/eks-bedrock,
+#                        which annotates this SA with the Bedrock IRSA role ARN.
+#                      • Anywhere else: a static model key in agent-secrets
+#                        (see base/secrets.example.yaml + overlays/vanilla).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents
+  labels:
+    app.kubernetes.io/part-of: agent-runner
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-receiver
+  namespace: agents
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runner
+  namespace: agents
+  # No cloud annotation here — that's deploy-target-specific. On EKS, apply
+  # overlays/eks-bedrock/sa-irsa-patch.yaml (or run irsa-bedrock.sh, which
+  # annotates the live SA) to bind the keyless Bedrock role.

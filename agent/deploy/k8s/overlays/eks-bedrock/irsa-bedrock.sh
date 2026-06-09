@@ -121,7 +121,8 @@ echo
 echo "✅ IRSA role ready:"
 echo "   $ROLE_ARN"
 echo
-echo "Put this in agent/deploy/k8s/namespace.yaml on the agent-runner SA:"
+echo "Put this on the agent-runner SA — in overlays/eks-bedrock/sa-irsa-patch.yaml"
+echo "(or base/namespace.yaml):"
 echo "   eks.amazonaws.com/role-arn: $ROLE_ARN"
 echo
-echo "Then apply namespace.yaml (the SA annotation is what binds the role to the pod)."
+echo "(This script already annotated the live SA; the manifest keeps it on re-apply.)"

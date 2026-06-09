@@ -1,84 +1,106 @@
-# Customer Install — Jira Triage Agent
+# Customer Install — Triage Agent
 
-Install the triage agent into an EKS cluster you **already operate**, against
-your **existing** GitLab and Jira. This installs only the shippable unit under
-`agent/` — it does **not** create a cluster, a VPC, or GitLab.
-
-Clone the repo, then run everything from its root:
+Install the triage agent into a Kubernetes cluster you **already operate**,
+against your **existing** issue tracker and source host. It does **not** create a
+cluster, a VPC, or your tracker/source. Clone the repo and run from its root:
 
 ```bash
 git clone <repo-url> && cd <repo>
 ```
 
+## Plug-and-play: pick one from each axis
+
+The agent is four independent choices. Mix and match — every combination works,
+because the engine treats each axis as a plugin:
+
+| Axis | Options | Where |
+|---|---|---|
+| **Input** (what triggers a run) | `jira-dc` · `jira` (Cloud) · `generic` signed POST · *write your own* | [inputs](#input--what-triggers-a-run) |
+| **Harness** (the coding agent) | `pi` · `kiro-cli` · `opencode` · *BYO* | [03b — Choose your harness](03b-choose-harness.md) |
+| **Deploy target** (the cluster) | EKS · GKE · AKS · on-prem · kind — **any Kubernetes** | [deploy-targets](deploy-targets.md) |
+| **Registry** (the image home) | ECR · Nexus · Harbor · GHCR · Docker Hub · self-hosted | [registries](#registry) |
+
+You set the **input** and **harness** via one env line (`TRIGGER=…`, `RUN_ENV
+HARNESS=…`) in `receiver.yaml`; the **deploy target** picks which `overlays/`
+folder you apply on top of `base/`; the **registry** is just where you push the
+image (`REGISTRY=…`). Nothing is hard-wired to AWS except the optional keyless
+Bedrock overlay.
+
+> **The base is portable.** `deploy/k8s/base/` runs on any Kubernetes. The only
+> cloud-specific pieces are *overlays*: `eks-bedrock` (keyless model auth on EKS)
+> and `aws-cloudfront` (public ingress on AWS). On any other cluster you apply
+> `base/` + a static model key and you're done.
+
 ## Start here → [00 — Complete Guide](00-COMPLETE-GUIDE.md)
 
-**One document, start to finish.** It takes you from nothing to a working
-end-to-end triage — AWS/Bedrock, EKS, ECR, the image, GitLab, Jira, the
-manifests, and verification. Follow it top to bottom; **you don't need any other
-page to install.**
+A **worked end-to-end example** for the most common combination — **input
+`jira-dc` × harness `pi` × deploy EKS (keyless Bedrock) × any registry** — from
+nothing to a working triage, top to bottom. If that's your stack, it's the whole
+job. For a different combination, follow it and swap the axis that differs using
+the per-axis pages below.
 
-It's written for the common case: **Jira Data Center running in the same
-cluster**, no internet exposure. If that's you, the Complete Guide is the whole
-job.
+## The axes in detail
 
-## What you'll deploy
+### Input — what triggers a run
 
-- A thin, stateless **receiver** that creates **one Kubernetes Job per event**
-  (no long-lived runner — K8s handles dedupe, concurrency, timeout, retry).
-- An **IRSA role** scoped to one Bedrock model (no static model credential).
-- The **`agents` namespace**: two ServiceAccounts, RBAC, a ResourceQuota
-  (concurrency), a NetworkPolicy, ConfigMap, and Secret.
+A run starts from one signed HTTP POST. The **trigger adapter** (`TRIGGER` env)
+parses + authenticates it; adapters live in `agent/runtime/trigger/`:
 
-The agent triggers when someone adds the `triage` label to a Jira ticket.
+| `TRIGGER` | Source | Auth | Actor keyed on |
+|---|---|---|---|
+| `jira-dc` | Jira Data Center / Server | HMAC (`X-Hub-Signature`) or shared-secret header | `user.name` / `user.key` |
+| `jira` | Jira Cloud | Automation-rule shared secret, or HMAC | `accountId` |
+| `generic` | any system that can POST + sign | HMAC | configurable |
 
-## Prerequisites at a glance
+GitHub or another tracker: add one adapter file (parse + `dedupeId` + actor) — see
+[07 — Authoring agents](07-authoring-agents.md). The agent *definition* (rubric,
+allowed values) is separate from the input adapter, so one agent can serve any.
 
-- An existing **EKS cluster** with an **IAM OIDC provider** (for IRSA).
-- **Amazon Bedrock** model access in the cluster's region.
-- An **ECR repo** (or any registry the cluster can pull from).
-- **Jira** (Data Center or Cloud) — permission to create a bot user + the trigger.
-- A **GitLab** instance the cluster can reach, and a read-only token.
-- `kubectl`, `docker` (buildx), `aws` CLI, `jq`, `openssl` on PATH.
+### Harness
 
-Full detail: [01 — Prerequisites](01-prerequisites.md).
+The coding-agent CLI each run spawns — `pi`, `kiro-cli`, or `opencode`, or BYO.
+This axis also decides **model auth** (keyless on EKS vs. a static key elsewhere).
+Full table + setup: [03b — Choose your harness](03b-choose-harness.md).
+
+### Deploy target
+
+Any Kubernetes cluster. `base/` is portable; an `overlays/` folder supplies the
+cluster-specific identity/ingress. Full matrix: [deploy-targets](deploy-targets.md).
+
+### Registry
+
+Any registry the cluster can pull from. The image ref is a plain string in the
+manifests and the build takes `REGISTRY=<host>/<repo>`. Private registries
+(Nexus/Harbor) use a `docker-registry` pull secret wired via `imagePullSecrets` /
+`IMAGE_PULL_SECRET` — see [01 — Prerequisites §3](01-prerequisites.md). ECR via the
+node role needs none.
 
 ---
 
-## Reference pages (deep-dives)
-
-The Complete Guide links to these where useful. **Read them only if you want more
-depth on one step** — you do not follow them in sequence.
+## Reference pages
 
 | Page | When you'd open it |
 |---|---|
-| [01 — Prerequisites](01-prerequisites.md) | Full prereq detail + reading your cluster's OIDC provider. |
+| [01 — Prerequisites](01-prerequisites.md) | Cluster/OIDC, registry, Bedrock access, tooling. |
 | [02 — Configure GitLab](02-configure-gitlab.md) | Read-only token, reachability, CODEOWNERS routing. |
-| [03 — Configure Jira (Data Center)](03-configure-jira-data-center.md) | The DC admin deep-dive: bot user, PAT, allowed values, trigger (System Webhook vs Automation rule, with the DC signing caveat). |
-| [04b — Deploy: Jira DC, in-cluster](04b-deploy-data-center-in-cluster.md) | The DC deploy deep-dive: ClusterIP receiver, `TRIGGER=jira-dc`, ingress NetworkPolicy. |
+| [03 — Configure Jira (Data Center)](03-configure-jira-data-center.md) | DC admin deep-dive: bot user, PAT, allowed values, the trigger. |
+| [03 — Configure Jira (Cloud)](03-configure-jira.md) | Cloud Automation-rule trigger. |
+| [03b — Choose your harness](03b-choose-harness.md) | Harness × model-auth axis. |
+| [deploy-targets](deploy-targets.md) | Deploy-target axis: EKS / GKE / AKS / on-prem / kind. |
+| [04 — Deploy (Cloud / public ingress)](04-deploy-agent.md) | CloudFront/ALB path for external (Jira Cloud) input. |
+| [04b — Deploy (DC, in-cluster)](04b-deploy-data-center-in-cluster.md) | In-cluster ClusterIP path, how it differs from 04. |
 | [05 — Operations](05-operations.md) | Verify, monitor, rotate credentials, tune cost, troubleshoot. |
-| [06 — Security](06-security.md) | The trust model and what to confirm in your environment. |
-| [07 — Authoring agents](07-authoring-agents.md) | The runner is generic; `SKILL.md` frontmatter defines the agent. Write a new one without touching code. |
-| [Configure & change the prompt](GUIDE-configure-and-change-the-prompt.md) | The two change speeds: fast (`kubectl apply`) vs. rebuild (bump the image tag). |
-| [03b — Choose your harness](03b-choose-harness.md) | Pick the coding-agent CLI (pi / kiro-cli / opencode) and how it authenticates to its model. Optional — defaults to pi on Bedrock via IRSA. |
-
-## Jira Cloud instead of Data Center?
-
-The agent supports Jira Cloud too (Automation rule + a public HTTPS endpoint via
-CloudFront or your own ALB). This is the **secondary** path — the Complete Guide
-covers DC in-cluster. For Cloud, use these two instead of the DC pages:
-
-- [03 — Configure Jira (Cloud + DC)](03-configure-jira.md) — the Cloud Automation-rule trigger.
-- [04 — Deploy the agent (CloudFront/ALB)](04-deploy-agent.md) — public webhook endpoint.
-
-Everything else (image build, IRSA, manifests, operations, security) is the same.
+| [06 — Security](06-security.md) | Trust model and what to confirm in your environment. |
+| [07 — Authoring agents](07-authoring-agents.md) | Write a new agent/input without touching engine code. |
+| [Configure & change the prompt](GUIDE-configure-and-change-the-prompt.md) | Fast (`kubectl apply`) vs. rebuild change loops. |
 
 ## How it works (one paragraph)
 
-Adding the `triage` label fires an HTTP request from Jira to the receiver. The
-receiver authenticates it (HMAC for system webhooks, or a shared-secret header
-for Automation rules), applies a stack of guards (loop guard, actor allowlist,
-dedupe, rate + daily-spend limits), acks fast, and spawns one headless agent run.
-That run reads the ticket and the relevant GitLab source (read-only), classifies
-it, writes back fields + an audit comment within an allow-listed value set, and
-removes the `triage` label. See [Architecture](../architecture/README.md) for
-diagrams and the full trust model.
+A signed HTTP POST from your input source hits the receiver. The receiver
+authenticates it, applies a stack of guards (loop guard, actor allowlist, dedupe,
+rate + spend limits), acks fast, and creates **one Kubernetes Job** for the run.
+That Job spawns the harness, which reads the ticket and the relevant source
+(read-only), classifies it, writes back fields + an audit comment within an
+allow-listed value set, and clears the trigger label. The receiver is stateless;
+Kubernetes provides dedupe, concurrency, timeout, and retry. See
+[Architecture](../architecture/README.md) for diagrams and the full trust model.

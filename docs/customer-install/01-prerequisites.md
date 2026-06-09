@@ -7,11 +7,18 @@ later steps ask for.
 
 ---
 
-## 1. An EKS cluster with an IAM OIDC provider
+## 1. A Kubernetes cluster
 
-The agent authenticates to Bedrock via **IRSA**, which requires the cluster to
-have an IAM OIDC identity provider. Most clusters created in the last few years
-have one; confirm and capture its ARN.
+Any Kubernetes cluster you operate — EKS, GKE, AKS, on-prem, kind, k3s. The agent
+talks to the cluster through the standard in-cluster API, so there are no
+distribution-specific requirements for the base. See
+[deploy-targets](deploy-targets.md) for the per-target matrix.
+
+**EKS + keyless Bedrock only:** if you'll use the recommended EKS path (`pi` →
+Bedrock via IRSA), the cluster needs an **IAM OIDC identity provider**. Most EKS
+clusters created in the last few years have one; confirm and capture its ARN
+(the `eks-bedrock` overlay's `irsa-bedrock.sh` also creates it if missing). On
+any other cluster you skip this — the model credential is a static key instead.
 
 ```bash
 CLUSTER=<your-cluster>
@@ -40,12 +47,17 @@ aws iam create-open-id-connect-provider --url "$ISSUER" \
 On the Cloud path you pass the **provider ARN** into `agent/deploy/terraform` as
 `oidc_provider_arn`; on the DC path the script handles it.
 
-## 2. Amazon Bedrock model access
+## 2. Model access
 
-The agent calls one model (default `eu.anthropic.claude-sonnet-4-6`). Confirm the
-account/region has access to it (Bedrock console → Model access), or pick a model
-you do have and set `bedrock_model_id` in terraform. The IAM policy is scoped to
-exactly that model — do not widen it to `*`.
+The agent calls one LLM. **How it authenticates depends on your harness + deploy
+target** (see [03b](03b-choose-harness.md) and [deploy-targets](deploy-targets.md)):
+
+- **EKS + `pi` (recommended):** Amazon Bedrock via keyless IRSA. Confirm the
+  account/region has access to the model (Bedrock console → Model access), default
+  `eu.anthropic.claude-sonnet-4-6`. The IAM policy is scoped to exactly that
+  model — never `*`.
+- **Any other cluster:** a static provider key (`opencode` + `ANTHROPIC_API_KEY`,
+  `kiro-cli` + `KIRO_API_KEY`, etc.) in `agent-secrets`. No Bedrock/IRSA needed.
 
 ## 3. A container registry the cluster can pull from
 
@@ -86,7 +98,7 @@ Service.
 > aws-load-balancer-controller`. See [Deploy → Step 5](04-deploy-agent.md).
 
 > If the cluster enforces NetworkPolicy (AWS VPC CNI with the network-policy
-> controller enabled), the bundled `agent/deploy/k8s/netpol.yaml` egress
+> controller enabled), the bundled `agent/deploy/k8s/base/netpol.yaml` egress
 > allowlist applies. If it does **not** enforce policy, that file is inert — see
 > [Security](06-security.md).
 

@@ -85,11 +85,11 @@ docker push "$REPO:latest"
 Copy the templated config/secret and set the placeholders.
 
 ```bash
-cp agent/deploy/k8s/config.example.yaml  agent/deploy/k8s/config.yaml    # fill (see Configure Jira §3)
-cp agent/deploy/k8s/secrets.example.yaml agent/deploy/k8s/secrets.yaml   # fill secrets
+cp agent/deploy/k8s/base/config.example.yaml  agent/deploy/k8s/base/config.yaml    # fill (see Configure Jira §3)
+cp agent/deploy/k8s/base/secrets.example.yaml agent/deploy/k8s/base/secrets.yaml   # fill secrets
 ```
 
-`agent/deploy/k8s/secrets.yaml` — set the credentials. You need the auth secret
+`agent/deploy/k8s/base/secrets.yaml` — set the credentials. You need the auth secret
 for **your** trigger path (and may leave the other as a placeholder):
 
 Keys are **UPPER_SNAKE_CASE** — the run Job loads the secret via `envFrom`, which
@@ -106,11 +106,11 @@ names. Dash-cased keys are silently dropped by the shell (the run would fail
 | `KIRO_API_KEY` *(kiro-cli only)* | from the Kiro portal — pi/opencode ignore it |
 | `ANTHROPIC_API_KEY` *(opencode only)* | your provider key — pi/kiro ignore it |
 
-`agent/deploy/k8s/namespace.yaml` — set the **agent-runner** ServiceAccount
+`agent/deploy/k8s/base/namespace.yaml` — set the **agent-runner** ServiceAccount
 annotation to the `triage_bedrock_role_arn` output from step 1 (the run Jobs use
 it for Bedrock; the receiver needs no cloud creds).
 
-`agent/deploy/k8s/receiver.yaml` — set:
+`agent/deploy/k8s/overlays/aws-cloudfront/receiver.yaml` — set:
 
 - `image:` and the `AGENT_IMAGE` env → your `$REPO:latest` (the receiver stamps
   this into the Jobs it creates — normally its own image).
@@ -128,13 +128,13 @@ it for Bedrock; the receiver needs no cloud creds).
 ## Step 4 — Apply
 
 ```bash
-kubectl apply -f agent/deploy/k8s/namespace.yaml      # ns + 2 ServiceAccounts
-kubectl apply -f agent/deploy/k8s/rbac.yaml           # receiver → create Jobs
-kubectl apply -f agent/deploy/k8s/resourcequota.yaml  # concurrency cap
-kubectl apply -f agent/deploy/k8s/netpol.yaml         # run-pod egress fence
-kubectl apply -f agent/deploy/k8s/config.yaml
-kubectl apply -f agent/deploy/k8s/secrets.yaml
-kubectl apply -f agent/deploy/k8s/receiver.yaml
+kubectl apply -f agent/deploy/k8s/base/namespace.yaml      # ns + 2 ServiceAccounts
+kubectl apply -f agent/deploy/k8s/base/rbac.yaml           # receiver → create Jobs
+kubectl apply -f agent/deploy/k8s/base/resourcequota.yaml  # concurrency cap
+kubectl apply -f agent/deploy/k8s/base/netpol.yaml         # run-pod egress fence
+kubectl apply -f agent/deploy/k8s/base/config.yaml
+kubectl apply -f agent/deploy/k8s/base/secrets.yaml
+kubectl apply -f agent/deploy/k8s/overlays/aws-cloudfront/receiver.yaml
 
 kubectl -n agents rollout status deploy/agent-receiver
 ```
