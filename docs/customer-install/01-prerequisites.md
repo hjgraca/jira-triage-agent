@@ -44,8 +44,8 @@ aws iam create-open-id-connect-provider --url "$ISSUER" \
   --thumbprint-list 9e99a48a9960b14926bb7f3b02e22da2b0ab7280
 ```
 
-On the Cloud path you pass the **provider ARN** into `agent/deploy/terraform` as
-`oidc_provider_arn`; on the DC path the script handles it.
+The `eks-bedrock` overlay's `irsa-bedrock.sh` script associates the provider and
+creates the role for you — you don't normally need to do this by hand.
 
 ## 2. Model access
 
@@ -85,17 +85,12 @@ The pod must reach, on egress:
 - **Your Jira** (HTTPS) — Cloud (`*.atlassian.net`) or your Data Center host.
 - **Your GitLab** — in-cluster Service DNS, or a reachable URL.
 
-And Jira must reach the **receiver's webhook endpoint** on ingress. Front the
-`agent-receiver` Service with CloudFront (default in [Deploy](04-deploy-agent.md))
-or your own ALB, and lock the origin so only that front door can reach the
-Service.
-
-> The default CloudFront path provisions the receiver as an **NLB managed by the
-> AWS Load Balancer Controller**, so it can lock the origin to CloudFront's
-> managed prefix list with a single SG rule (a classic ELB + ~45 CIDR ranges
-> overflows the 60-rules-per-SG limit and won't provision). The LBC must be
-> installed in the cluster — `kubectl -n kube-system get deploy
-> aws-load-balancer-controller`. See [Deploy → Step 5](04-deploy-agent.md).
+And the input source must reach the **receiver's webhook endpoint** on ingress.
+In the common case the source (e.g. Jira) runs in the **same cluster** and posts
+to the receiver's in-cluster `ClusterIP` DNS name directly — no public ingress,
+no load balancer. (If your source is outside the cluster, put your own
+Ingress/LoadBalancer + TLS in front of the Service and lock it down — that's
+orthogonal to the rest of this guide.)
 
 > If the cluster enforces NetworkPolicy (AWS VPC CNI with the network-policy
 > controller enabled), the bundled `agent/deploy/k8s/base/netpol.yaml` egress
@@ -110,7 +105,6 @@ Service.
 | `docker` (with `buildx`) | recent | building + pushing the `linux/amd64` image |
 | `aws` CLI | v2 | IRSA role (DC path), EKS describe; ECR login if you use ECR |
 | `jq`, `curl`, `openssl` | any | secrets, probes, verification |
-| `terraform` | >= 1.5 | **Cloud path only** — `agent/deploy/terraform` (IRSA + CloudFront) |
 
 ## Values to collect now
 

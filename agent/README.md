@@ -1,27 +1,28 @@
 # agent/ — the shippable agent runner
 
-The **complete, self-contained unit** deployed into a Kubernetes cluster.
-Nothing under `workshop/` is required to run it. It's organized as three concerns:
+The **complete, self-contained unit** deployed into a Kubernetes cluster you
+already operate. `kubectl` + `docker` + (on EKS) one small `aws` CLI script —
+nothing else to stand up. It's organized as three concerns:
 
 ```
 runtime/                 THE ENGINE — trigger × agent × harness
   receiver.js            stateless webhook front: auth → decide → create one Job → ack
   run.js                 one-shot Job entrypoint: render prompt → spawn harness → exit
   lib/                   auth.js, agent-def.js, job.js (manifest), k8s.js (createJob)
-  trigger/               trigger adapters (jira, generic, + your own)
+  trigger/               trigger adapters (jira, jira-dc, generic, + your own)
   harness/               harness adapters (pi, kiro-cli, opencode, + your own)
   test/                  node:test suite  (run: cd runtime && node --test)
 
 agents/                  THE IMPLEMENTATIONS — one dir per agent, each with its
-  jira-triage/             own Dockerfile (one agent per image, isolated)
+  jira-triage-dc/          own Dockerfile (one agent per image, isolated)
     SKILL.md  scripts/  Dockerfile
   <your-agent>/          ← a code-review agent goes HERE, as its own dir
 
 deploy/                  HOW IT SHIPS
   docker/                base.Dockerfile (engine) + pi/kiro/opencode (harness bases)
-  k8s/                   namespace + 2 SAs, rbac, resourcequota, netpol,
-                         receiver Deployment+Service, config/secret
-  terraform/             standalone IRSA + optional CloudFront for an EXISTING cluster
+  k8s/base/              namespace + 2 SAs, rbac, resourcequota, netpol,
+                         ingress-netpol, receiver (ClusterIP), config/secret
+  k8s/overlays/          eks-bedrock (keyless IRSA) · vanilla (static key)
 ```
 
 **Where does a new agent (e.g. code-review) go?** A new directory under
@@ -39,43 +40,35 @@ See [runtime/harness/README.md](runtime/harness/README.md) and
 
 ## Install
 
-Full step-by-step: **[../docs/customer-install/](../docs/customer-install/)**.
+**Full start-to-finish guide:
+[../docs/customer-install/00-COMPLETE-GUIDE.md](../docs/customer-install/00-COMPLETE-GUIDE.md)**
+(AWS/Bedrock, image → registry, GitLab, Jira DC, manifests, verification).
 
-> **This directory has a self-contained `Makefile`** — `make agent-image
-> AGENT=jira-triage-dc HARNESS=pi REGISTRY=<host>/<repo>`, `make test`,
-> `make agent-deploy [OVERLAY=eks-bedrock]`. Run them from here (`cd agent`).
-> For **Jira Data Center, in-cluster** (the common case), follow
-> **[04b — Deploy: DC in-cluster](../docs/customer-install/04b-deploy-data-center-in-cluster.md)**
-> and **[03 — Configure Jira Data Center](../docs/customer-install/03-configure-jira-data-center.md)**,
-> NOT the Cloud/terraform quickstart below.
-
-Short version (Cloud / CloudFront path, with Terraform):
+This directory has a self-contained `Makefile` — run from here (`cd agent`):
 
 ```bash
-# 1. cloud deps (against your existing cluster's OIDC provider)
-cd agent/deploy/terraform && cp example.tfvars terraform.tfvars   # edit, then:
-terraform init && terraform apply
+# 1. (EKS) create the one IAM role for Bedrock — a small AWS CLI script
+CLUSTER=<cluster> REGION=eu-west-1 deploy/k8s/overlays/eks-bedrock/irsa-bedrock.sh
 
-# 2. image — three layers: base (engine) → harness (CLI) → agent (one agent)
-make agent-image AGENT=jira-triage HARNESS=pi
-#   …or raw:
-#   docker build -f agent/deploy/docker/base.Dockerfile  -t agent-base:local       agent
-#   docker build -f agent/deploy/docker/pi.Dockerfile    --build-arg BASE=agent-base:local -t agent-pi:local agent
-#   docker build -f agent/agents/jira-triage/Dockerfile  --build-arg BASE=agent-pi:local   -t <repo>:latest  agent
+# 2. build + push the image (any registry — Nexus, ECR, Harbor, …)
+docker login <registry-host>
+make agent-image AGENT=jira-triage-dc HARNESS=pi REGISTRY=<host>/<repo>
 
-# 3. config + secrets (fill the .example templates), set the SA role ARN,
-#    image, JIRA_BASE_URL, GITLAB_BASE_URL, AUTHORIZED_ACTORS, then:
-kubectl apply -f agent/deploy/k8s/
+# 3. fill the templates (deploy/k8s/base/{config,secrets}.example.yaml → .yaml),
+#    set image/AUTHORIZED_ACTORS/GITLAB_BASE_URL in base/receiver.yaml + the
+#    SA role ARN in overlays/eks-bedrock/sa-irsa-patch.yaml, then:
+make agent-deploy OVERLAY=eks-bedrock
 
-# 4. wire CloudFront + register the Jira trigger (see the install guide)
+# 4. register the Jira trigger (see the install guide)
 ```
+
+Targets and which manifests apply per cluster: [deploy/k8s/](deploy/k8s/) and
+[../docs/customer-install/deploy-targets.md](../docs/customer-install/deploy-targets.md).
 
 ## Build / test
 
 ```bash
-cd agent/runtime && node --test              # runtime unit + integration tests
-bash agent/agents/jira-triage/tests/run.sh   # skill script tests
+cd agent/runtime && node --test                 # runtime unit + integration tests
+bash agent/agents/jira-triage-dc/tests/run.sh   # skill script tests
+#   …or, from agent/:  make test
 ```
-
-See [../docs/architecture/](../docs/architecture/) for how the pieces fit and the
-trust model.

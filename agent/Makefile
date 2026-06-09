@@ -1,8 +1,7 @@
 ## Self-contained Makefile for the agent (run from the agent/ directory).
 ##
-## It does NOT build a cluster, GitLab, or anything in the workshop lab — it only
-## builds/pushes the agent image and applies the manifests. (The repo-root
-## Makefile, with the lab bring-up targets, is separate.)
+## It does NOT create a cluster or any cloud infra — it only builds/pushes the
+## agent image and applies the manifests into a cluster you already operate.
 ##
 ## Run these from the agent/ directory:
 ##   make agent-image REGISTRY=<host>/<path> AGENT=jira-triage-dc HARNESS=pi   # build + push one image

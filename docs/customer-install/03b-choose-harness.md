@@ -10,7 +10,7 @@ adapter file.
 right choice for most installs. Read on only if you want kiro-cli or opencode, or
 want to understand the model-auth before you debug a `403`/`AccessDenied`.
 
-← [Configure Jira](03-configure-jira.md) · Next → [Deploy the agent](04-deploy-agent.md)
+← [Configure Jira](03-configure-jira-data-center.md) · Next → [Deploy the agent](04b-deploy-data-center-in-cluster.md)
 
 ---
 
@@ -49,10 +49,11 @@ they specifically want to use (opencode Option B).
 
 ### How keyless (IRSA) works
 
-`agent/deploy/terraform/bedrock.tf` creates an IAM role whose policy is scoped to
-**one** Bedrock model ARN and whose trust is the cluster's OIDC provider for a
-specific `namespace:serviceaccount`. Its ARN goes on the `agent-runner`
-ServiceAccount annotation (`namespace.yaml`). EKS then injects `AWS_ROLE_ARN` +
+The `eks-bedrock` overlay's `irsa-bedrock.sh` (a small `aws` CLI script) creates
+an IAM role whose policy is scoped to **one** Bedrock model ARN and whose trust is
+the cluster's OIDC provider for a specific `namespace:serviceaccount`. Its ARN
+goes on the `agent-runner` ServiceAccount annotation (`sa-irsa-patch.yaml`). EKS
+then injects `AWS_ROLE_ARN` +
 `AWS_WEB_IDENTITY_TOKEN_FILE` into the run pod with no action by us; the AWS SDK
 in pi/opencode does `AssumeRoleWithWebIdentity` → `bedrock:InvokeModel` on the
 one allowed model. The agent code adds nothing — `pi.js`'s `buildCommand` returns
@@ -65,7 +66,7 @@ Bedrock returns AccessDenied"):
    must equal what the run Job uses (`agents` / `agent-runner`). Mismatch → EKS
    injects no token, SDK falls back to no creds.
 2. **Model id** — the `MODEL`/`OPENCODE_MODEL` in `RUN_ENV` must be the **same**
-   model the Terraform `bedrock_model_id` scoped the policy to.
+   model `irsa-bedrock.sh` scoped the policy to (the script's `MODEL=`).
 3. **Region** — `AWS_REGION` must cover the inference profile. opencode needs it
    set explicitly in `RUN_ENV` or the SDK can't resolve the endpoint.
 
@@ -101,7 +102,7 @@ Things that bite if you skip them:
 1. **Build** — the CLI is baked into the image as a layer: base (engine) →
    `<harness>` (engine + CLI) → `<agent>`. `make agent-image AGENT=jira-triage
    HARNESS=<pi|kiro|opencode>` (or the raw `docker build` sequence in
-   [04 → Step 2](04-deploy-agent.md)).
+   [04b → Step 2](04b-deploy-data-center-in-cluster.md)).
 2. **Runtime** — `HARNESS` in `receiver.yaml`'s `RUN_ENV` names the **adapter**,
    and must match the CLI baked into the image.
 
@@ -192,4 +193,4 @@ installs the CLI, then set `image`/`AGENT_IMAGE` + `HARNESS=<adapter>` in
 > `find` the binary there and `chown -R 10001:10001 /home/agent` — see
 > `kiro.Dockerfile` / `opencode.Dockerfile`.
 
-Next → [Deploy the agent](04-deploy-agent.md)
+Next → [Deploy the agent](04b-deploy-data-center-in-cluster.md)

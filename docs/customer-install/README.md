@@ -26,10 +26,13 @@ folder you apply on top of `base/`; the **registry** is just where you push the
 image (`REGISTRY=…`). Nothing is hard-wired to AWS except the optional keyless
 Bedrock overlay.
 
-> **The base is portable.** `deploy/k8s/base/` runs on any Kubernetes. The only
-> cloud-specific pieces are *overlays*: `eks-bedrock` (keyless model auth on EKS)
-> and `aws-cloudfront` (public ingress on AWS). On any other cluster you apply
-> `base/` + a static model key and you're done.
+> **The base is portable.** `deploy/k8s/base/` runs on any Kubernetes and exposes
+> the receiver as an in-cluster `ClusterIP` (the input source posts to it over
+> cluster DNS). The only cloud-specific piece is the `eks-bedrock` overlay
+> (keyless model auth on EKS); on any other cluster you apply `base/` + a static
+> model key and you're done. Need to accept a webhook from outside the cluster?
+> Put your own Ingress/LoadBalancer + TLS in front of the Service — orthogonal to
+> everything here.
 
 ## Start here → [00 — Complete Guide](00-COMPLETE-GUIDE.md)
 
@@ -84,11 +87,9 @@ node role needs none.
 | [01 — Prerequisites](01-prerequisites.md) | Cluster/OIDC, registry, Bedrock access, tooling. |
 | [02 — Configure GitLab](02-configure-gitlab.md) | Read-only token, reachability, CODEOWNERS routing. |
 | [03 — Configure Jira (Data Center)](03-configure-jira-data-center.md) | DC admin deep-dive: bot user, PAT, allowed values, the trigger. |
-| [03 — Configure Jira (Cloud)](03-configure-jira.md) | Cloud Automation-rule trigger. |
 | [03b — Choose your harness](03b-choose-harness.md) | Harness × model-auth axis. |
 | [deploy-targets](deploy-targets.md) | Deploy-target axis: EKS / GKE / AKS / on-prem / kind. |
-| [04 — Deploy (Cloud / public ingress)](04-deploy-agent.md) | CloudFront/ALB path for external (Jira Cloud) input. |
-| [04b — Deploy (DC, in-cluster)](04b-deploy-data-center-in-cluster.md) | In-cluster ClusterIP path, how it differs from 04. |
+| [04b — Deploy (in-cluster)](04b-deploy-data-center-in-cluster.md) | The in-cluster ClusterIP deploy, step by step. |
 | [05 — Operations](05-operations.md) | Verify, monitor, rotate credentials, tune cost, troubleshoot. |
 | [06 — Security](06-security.md) | Trust model and what to confirm in your environment. |
 | [07 — Authoring agents](07-authoring-agents.md) | Write a new agent/input without touching engine code. |

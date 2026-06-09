@@ -3,15 +3,11 @@
 How the triage agent is put together, how a request flows through it, and the
 trust model that keeps an LLM-with-tools acting on real tickets safe.
 
-The same **agent** runs in two deployment shapes:
-
-- **Workshop** — a self-contained lab: EKS + self-hosted GitLab + the agent, all
-  built by `workshop/terraform` and the `Makefile`.
-- **Customer** — the agent only, installed into a cluster the customer already
-  runs, against their existing GitLab/Jira. Built by `agent/deploy/terraform` + `agent/deploy/k8s`.
-
-The agent's internals (receiver, skill, guardrails) are identical in both; only
-what surrounds it differs.
+The agent installs into a Kubernetes cluster you already operate, against your
+existing GitLab and Jira — `agent/deploy/k8s/` (manifests) plus, on EKS, one
+`aws` CLI script for the Bedrock IAM role. The common topology puts Jira **in the
+same cluster** as the agent, so the receiver is an in-cluster `ClusterIP` with no
+public ingress.
 
 ## Runtime model: receiver → one Job per event
 
@@ -82,40 +78,39 @@ you change behavior by configuration, not code:
 | **Skill / agent** | `agent/agents/jira-triage/` | The default agent: `SKILL.md` (frontmatter + triage rubric + trust boundary), bundled scripts `jira.sh` / `gitlab.sh`, and its own `Dockerfile`. One dir per agent. |
 | **Harness adapters** | `agent/runtime/harness/` | Pluggable coding-agent CLIs (`HARNESS` env; default `pi`; `kiro-cli` + `opencode` built in). Each owns argv + result-reading. Skill-less harnesses share `inline-skill.js` — see the [harness README](../../agent/runtime/harness/README.md). |
 | **Image** | `agent/deploy/docker/` + `agent/agents/<name>/Dockerfile` | Three agent-blank-until-last layers: `base.Dockerfile` (engine: receiver + run + adapters) → `<harness>.Dockerfile` (+ CLI) → the agent's own Dockerfile (+ one agent). One image, two entrypoints. `make agent-image AGENT=<name> HARNESS=<name>`. |
-| **Manifests** | `agent/deploy/k8s/` | `namespace` (2 SAs) + `rbac` (receiver→create Jobs) + `resourcequota` (concurrency) + `netpol` (run-pod egress) + `receiver` (Deployment + Service) + config/secret. |
-| **Cloud deps** | `agent/deploy/terraform/` | Bedrock IRSA role (scoped to one model) + optional CloudFront for a domain-free HTTPS webhook endpoint. |
+| **Manifests** | `agent/deploy/k8s/base/` | `namespace` (2 SAs) + `rbac` (receiver→create Jobs) + `resourcequota` (concurrency) + `netpol` (run-pod egress) + `ingress-netpol` (who may reach the receiver) + `receiver` (Deployment + ClusterIP Service) + config/secret. |
+| **Cloud deps** | `agent/deploy/k8s/overlays/eks-bedrock/` | One `aws` CLI script (`irsa-bedrock.sh`) creating a Bedrock IRSA role scoped to a single model, + the SA annotation patch. (Off EKS: a static model key, `overlays/vanilla`.) |
 
 ---
 
-## Topology — customer install (agent only)
+## Topology — in-cluster install
 
 ```mermaid
 flowchart LR
-  subgraph Jira["Jira (Cloud or Data Center)"]
-    R[Automation rule / system webhook]
-  end
-  subgraph AWS["Customer AWS account"]
-    CF[CloudFront\nor customer ALB+TLS]
-    NLB[NLB\nSG locked to CloudFront\norigin prefix list]
-    subgraph EKS["Existing EKS cluster — namespace: agents"]
-      RC[Receiver Deployment\nstateless, N replicas]
+  subgraph EKS["Existing EKS cluster"]
+    subgraph JNS["namespace: jira (or wherever Jira runs)"]
+      R[Jira Data Center\nsystem webhook / Automation rule]
+    end
+    subgraph ANS["namespace: agents"]
+      RC[Receiver Deployment\nstateless, N replicas, ClusterIP]
       RC -. create Job .-> J1[Run Job\nagent image: run.js + pi]
     end
     BR[Amazon Bedrock\nInvokeModel scoped to 1 model]
   end
-  subgraph SRC["Customer GitLab"]
+  subgraph SRC["GitLab (external, via NAT)"]
     G[REST v4\nread-only]
   end
 
-  R -->|POST + auth header| CF --> NLB --> RC
+  R -->|POST + auth header, in-cluster DNS| RC
   J1 -->|IRSA, no static cred| BR
   J1 -->|read-only routing + code| G
-  J1 -->|comment / set fields / remove label| Jira
+  J1 -->|comment / set fields / remove label| R
 ```
 
-The workshop topology is the same picture with two additions: GitLab runs
-**inside** the cluster (Helm), and CloudFront + the cluster are created together
-by one `workshop/terraform` apply.
+Jira posts to the receiver's in-cluster Service DNS
+(`http://agent-receiver.agents.svc.cluster.local/jira-webhook`) — no public
+endpoint, no load balancer. If the input source is *outside* the cluster, front
+the Service with your own Ingress/LoadBalancer + TLS (orthogonal to the rest).
 
 ---
 
@@ -125,7 +120,6 @@ by one `workshop/terraform` apply.
 sequenceDiagram
   participant U as User
   participant J as Jira
-  participant CF as CloudFront
   participant RC as Receiver
   participant K as K8s API
   participant P as Run Job (run.js + harness)
@@ -133,8 +127,7 @@ sequenceDiagram
   participant B as Bedrock
 
   U->>J: add `triage` label
-  J->>CF: POST webhook (+ auth header, initiator accountId)
-  CF->>RC: forward
+  J->>RC: POST webhook (+ auth header, initiator) over in-cluster DNS
   Note over RC: 1. authenticate (HMAC OR shared secret)<br/>2. loop guard (stateless marker)<br/>3. eligibility (created / label-added)<br/>4. authz (actor allowlist)
   RC->>K: create Job run-<hash(delivery-id)>
   Note over K: 409 AlreadyExists = duplicate → ack<br/>ResourceQuota caps concurrency
@@ -159,7 +152,7 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
 | # | Guard | What it stops | Where |
 |---|---|---|---|
 | Auth | HMAC (`X-Hub-Signature`) **or** constant-time shared secret (`X-Triage-Token`) | Forged/unauthenticated webhooks. | receiver |
-| R10b | Origin lock — NLB SG allows inbound only from CloudFront's managed prefix list (one rule) | Reaching the receiver directly, bypassing CloudFront/auth. | LB SG |
+| R10b | Network boundary — `ClusterIP` (no public IP) + an ingress NetworkPolicy allowing only the input source's namespace | Reaching the receiver from outside the cluster, or from an unrelated namespace. | K8s |
 | R7 | Loop guard — **stateless** disclaimer/loop marker (no bot-account lookup) | The agent triggering itself on its own comment. | trigger |
 | R6b | Actor allowlist (`AUTHORIZED_ACTORS`) on label-add | Anyone who can edit labels spawning runs. | trigger |
 | R8 | Dedupe = deterministic **Job name** (409 = duplicate) | Replays and retries double-triaging. | K8s |
@@ -172,10 +165,10 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
 | R12 | Egress NetworkPolicy on run pods + IRSA scoped to one model | Exfiltration of the IRSA token or repo contents. | K8s + IAM |
 | — | GitLab token **read-only**; receiver RBAC = create Jobs only | The agent modifying source; the receiver doing anything but enqueue. | IAM + RBAC |
 
-> **Why two auth paths?** Jira Cloud **Automation rules** can't compute an HMAC
-> over the request body, so they authenticate with the shared-secret header.
-> Jira **Data Center / Server** system webhooks sign with HMAC. The receiver
-> accepts either — see [Configure Jira](../customer-install/03-configure-jira.md).
+> **Why two auth paths?** **Automation rules** can't compute an HMAC over the
+> request body, so they authenticate with the shared-secret header. **System
+> webhooks** (Jira Data Center / Server) sign with HMAC. The receiver accepts
+> either — see [Configure Jira (DC)](../customer-install/03-configure-jira-data-center.md).
 
 > **Daily spend cap.** The old in-process rolling-24h budget is gone (it needed
 > shared state). `ResourceQuota` bounds *concurrency*; the cumulative dollar
@@ -203,12 +196,8 @@ The agent runs an LLM, with a shell tool, over **attacker-controllable input**
 - **Stateless loop guard.** The guard relies only on the agent's own loop marker
   in the triggering comment — no `/myself` call, no per-instance state, so the
   receiver needs no Jira credentials at all.
-- **No domain required.** CloudFront's default `*.cloudfront.net` cert fronts the
-  receiver Service with valid TLS and no domain purchase; customers with their
-  own domain + ALB can skip it.
-- **NLB + prefix-list origin lock.** The receiver sits behind an LBC-managed NLB
-  so its security group can reference CloudFront's origin-facing managed prefix
-  list as a *single* rule. A classic ELB would fan ~45 CloudFront CIDRs into ~45
-  SG rules and hit the 60-rules-per-SG limit (`RulesPerSecurityGroupLimitExceeded`
-  → the LB never provisions). This is why the cluster needs the AWS Load Balancer
-  Controller for the default ingress path.
+- **In-cluster receiver, no public ingress.** The receiver is a `ClusterIP`
+  Service the input source reaches over cluster DNS, fenced by an ingress
+  NetworkPolicy. No load balancer, no public endpoint, nothing to lock down at the
+  edge — the smaller attack surface is the point. External sources put their own
+  Ingress/LoadBalancer + TLS in front, independently.

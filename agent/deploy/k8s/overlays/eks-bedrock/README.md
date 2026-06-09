@@ -7,7 +7,7 @@ recommended path when you're on EKS and using Bedrock (the `pi` harness).
 What this overlay adds over `base/`:
 - **`irsa-bedrock.sh`** — creates the one IAM role (policy scoped to a single
   model, never `*`), associates the cluster OIDC provider, and binds the role to
-  `agents:agent-runner`. AWS CLI only; no Terraform.
+  `agents:agent-runner`. Plain `aws` CLI — nothing else to install or manage.
 - **`sa-irsa-patch.yaml`** — the `agent-runner` SA with the role-ARN annotation
   (the script also annotates the live SA, so this is mostly for record/re-apply).
 

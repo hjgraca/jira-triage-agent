@@ -4,7 +4,7 @@ The agent reads GitLab **read-only** to route tickets to the right component and
 for feature tickets, to analyze which repos a change touches and how to split the
 work across teams. It never writes to GitLab.
 
-← [Prerequisites](01-prerequisites.md) · Next → [Configure Jira](03-configure-jira.md)
+← [Prerequisites](01-prerequisites.md) · Next → [Configure Jira](03-configure-jira-data-center.md)
 
 ---
 
@@ -27,12 +27,12 @@ GitLab → **Project (or Group) → Settings → Repository → Deploy tokens**:
 
 ## 2. Make GitLab reachable from the cluster
 
-Set `GITLAB_BASE_URL` (in `agent/deploy/k8s/overlays/aws-cloudfront/receiver.yaml`) to a URL the pod can
-reach:
+Set `GITLAB_BASE_URL` (in `RUN_ENV`, `agent/deploy/k8s/base/receiver.yaml`) to a
+URL the pod can reach:
 
-- **In-cluster GitLab:** use the Service DNS, including the port. In the workshop
-  that is `http://gitlab-webservice-default.gitlab.svc:8080` (the service has no
-  port-80 listener — the `:8080` matters).
+- **In-cluster GitLab:** use the Service DNS, including the port — e.g.
+  `http://gitlab-webservice-default.gitlab.svc:8080` (if the service has no
+  port-80 listener, the `:8080` matters).
 - **External GitLab:** use the HTTPS URL, and ensure the egress NetworkPolicy
   (if enforced) allows it. The bundled policy allows in-cluster ranges + HTTPS on
   443; widen/narrow as needed.
@@ -84,4 +84,4 @@ each bounded so a single run can't pull an unbounded repo into the model context
 Repo code **informs the agent's reasoning** but, per the skill rubric (R2a), is
 **never** pasted into a Jira comment. See [Security](06-security.md).
 
-Next → [Configure Jira](03-configure-jira.md)
+Next → [Configure Jira](03-configure-jira-data-center.md)
