@@ -41,9 +41,10 @@ function verifySignature(rawBody, headerValue, secret) {
  * an HMAC over the body (e.g. Jira Cloud Automation's "Send web request", which
  * has no smart-value crypto). The caller sends a fixed bearer token in a custom
  * header; we compare it in constant time. Weaker than per-message HMAC (a static
- * token is replayable if leaked), so it must lean on other layers: the
- * CloudFront-origin IP lock (R10b), the actor allowlist (R6b), dedupe (R8), and
- * the daily budget (R10c). Prefer HMAC for any source that can sign.
+ * token is replayable if leaked), so it must lean on other layers: the in-cluster
+ * network boundary (the receiver is ClusterIP + an ingress NetworkPolicy, R10b),
+ * the actor allowlist (R6b), dedupe (R8), and the spend budget (R10c). Prefer
+ * HMAC for any source that can sign.
  */
 function verifySharedSecret(headerValue, secret) {
   if (!headerValue || !secret) return false;

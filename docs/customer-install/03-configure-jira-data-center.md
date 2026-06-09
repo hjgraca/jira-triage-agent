@@ -1,9 +1,7 @@
 # 03 (DC) — Configure Jira Data Center (customer admin, step by step)
 
 A concrete, click-by-click guide for the **Jira Data Center / Server admin** (Jira
-10.x) to set up everything the triage agent needs on the Jira side. This is the
-DC-specific companion to [03 — Configure Jira](03-configure-jira.md); follow
-**this** one for a Data Center instance.
+10.x) to set up everything the triage agent needs on the Jira side.
 
 Who does this: a **Jira administrator** (you said you're admin on Jira). It does
 not touch the cluster — it's all in the Jira UI + a couple of `curl` checks.

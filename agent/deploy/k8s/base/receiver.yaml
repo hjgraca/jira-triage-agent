@@ -11,8 +11,10 @@
 #   2. Service type: ClusterIP  (no LB annotations, no loadBalancerClass)
 # Swap TRIGGER for another input (jira / github / generic) as needed.
 #
-# Need PUBLIC ingress (Jira Cloud / external SaaS webhook)? Use
-# overlays/aws-cloudfront/receiver.yaml instead (LoadBalancer + CloudFront).
+# This is an IN-CLUSTER receiver (ClusterIP): the input source (e.g. Jira running
+# in the same cluster) reaches it over the in-cluster DNS name. If you need to
+# accept a webhook from OUTSIDE the cluster, expose this Service with your own
+# Ingress/LoadBalancer + TLS and lock it down — orthogonal to everything here.
 #
 # Pair this with base/ingress-netpol.yaml (lets the input namespace reach :8080)
 # and the matching agent image (e.g. jira-triage-dc → REST v2 / Bearer PAT).
@@ -102,8 +104,8 @@ spec:
             limits: { memory: 128Mi }
 ---
 # Plain ClusterIP — reachable only from inside the cluster. Jira (another
-# namespace, same cluster) posts here directly; no LB, no public IP, no
-# CloudFront. The DNS name is agent-receiver.agents.svc.cluster.local.
+# namespace, same cluster) posts here directly; no LB, no public IP. The DNS
+# name is agent-receiver.agents.svc.cluster.local.
 apiVersion: v1
 kind: Service
 metadata:

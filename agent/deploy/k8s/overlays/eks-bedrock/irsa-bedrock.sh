@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# irsa-bedrock.sh — create the ONE AWS thing the agent needs, without Terraform.
+# irsa-bedrock.sh — create the ONE AWS resource the agent needs, with the AWS CLI.
 #
 # The agent calls Amazon Bedrock from the cluster via IRSA: the agent-runner
 # ServiceAccount assumes an IAM role whose policy is scoped to EXACTLY one model.
 # That single role is the only cloud resource — everything else is `kubectl apply`.
 # This script creates it with the AWS CLI and prints the role ARN to paste into
-# namespace.yaml. No Terraform, no state files.
+# namespace.yaml. No state files, nothing else to install or manage.
 #
 # Idempotent: re-running updates the policy/role rather than erroring.
 #

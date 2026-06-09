@@ -1,34 +1,14 @@
 .claude/settings.local.json
 
-# Terraform
-**/.terraform/*
-*.tfstate
-*.tfstate.*
-tfplan
-*.tfplan
-crash.log
-*.tfvars
-!example.tfvars
-.terraform.lock.hcl
-
 # Kube
 kubeconfig
 
 # Real triage secrets + config (only the .example templates are committed)
-agent/deploy/k8s/secrets.yaml
-agent/deploy/k8s/config.yaml
+agent/deploy/k8s/base/secrets.yaml
+agent/deploy/k8s/base/config.yaml
 
 # macOS junk
 .DS_Store
-
-# Terraform state — never commit. The customer applies agent/deploy/terraform in their
-# own account/backend; the workshop module holds the lab's live state locally.
-workshop/terraform/*.tfstate
-workshop/terraform/*.tfstate.*
-agent/deploy/terraform/.terraform/
-agent/deploy/terraform/*.tfstate
-agent/deploy/terraform/*.tfstate.*
-agent/deploy/terraform/terraform.tfvars
 
 # Delivery artifacts (git archive output) — never commit, any prefix
 *-triage-agent-*.tar.gz

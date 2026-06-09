@@ -9,7 +9,6 @@ agent/deploy/k8s/
                netpol, ingress-netpol, receiver, config/secrets templates)
   overlays/
     eks-bedrock/     EKS: keyless Bedrock model auth (IRSA role + SA annotation)
-    aws-cloudfront/  AWS: public webhook ingress (LoadBalancer + CloudFront)
     vanilla/         everything else: static model key, no cloud overlay
 ```
 
@@ -23,12 +22,12 @@ in-cluster Kubernetes API with the pod's ServiceAccount token (standard
 |---|---|---|
 | **EKS** (Bedrock, recommended) | `base/` + `overlays/eks-bedrock` | **Keyless** — IRSA role scoped to one model, no stored key. Run `overlays/eks-bedrock/irsa-bedrock.sh`. |
 | **GKE / AKS / on-prem / kind / k3s / …** | `base/` + `overlays/vanilla` | **Static key** in `agent-secrets` (a provider key for opencode/kiro-cli). See `overlays/vanilla/README.md`. |
-| **Any of the above, public ingress** | add `overlays/aws-cloudfront` (AWS) or your own Ingress/ALB | orthogonal — combine with either row above |
 
-Two axes, independent:
-- **Identity / model auth** — `eks-bedrock` (keyless) *or* a static key (`vanilla`).
-- **Ingress** — in-cluster `ClusterIP` (the `base/` receiver, default) *or* public
-  (`aws-cloudfront`, or your own).
+The only axis is **identity / model auth** — `eks-bedrock` (keyless) *or* a static
+key (`vanilla`). Ingress isn't an axis: the `base/` receiver is an in-cluster
+`ClusterIP` that the input source reaches over cluster DNS. If you ever need to
+accept a webhook from outside the cluster, put your own Ingress/LoadBalancer + TLS
+in front of the Service — independent of everything here.
 
 ## What "any Kubernetes" requires
 
@@ -40,9 +39,9 @@ The base assumes only standard Kubernetes:
   (`base/netpol.yaml`, `base/ingress-netpol.yaml`). If your CNI doesn't enforce
   policy they're inert — auth still gates everything; see [Security](06-security.md).
 
-No EKS add-ons, no `eksctl`, no Terraform are needed for the base or the vanilla
-overlay. Terraform + the AWS Load Balancer Controller appear only on the
-AWS-specific `aws-cloudfront` / Cloud path.
+The base and the vanilla overlay need only `kubectl` — no cluster add-ons. The
+EKS path adds just the one `aws` CLI script (`irsa-bedrock.sh`) that creates the
+Bedrock IAM role.
 
 ## Model auth off EKS
 
@@ -81,4 +80,4 @@ Or, from `agent/`: `make agent-deploy` (base) / `make agent-deploy
 OVERLAY=eks-bedrock` (base + EKS identity).
 
 Each overlay folder has a README with its exact apply sequence:
-`agent/deploy/k8s/overlays/{eks-bedrock,vanilla,aws-cloudfront}/README.md`.
+`agent/deploy/k8s/overlays/{eks-bedrock,vanilla}/README.md`.

@@ -21,7 +21,7 @@ Corporate net ─VPN─ Transit Gateway ─ VPC (EKS "devtools" cluster)
 ```
 
 - **No internet exposure** — Jira reaches the receiver over in-cluster DNS.
-- **No Terraform, no `make` required, no `workshop/`** — `kubectl` + `docker` +
+- **Just `kubectl` + `docker`** (plus, on EKS, one small `aws` CLI script for the IAM role) +
   one small script. (A convenience `Makefile` ships too; raw commands are given.)
 - **One IAM role** is the only cloud resource (for Bedrock, via IRSA).
 
@@ -41,7 +41,7 @@ kubectl version --client && aws --version \
 ```
 - `kubectl` (matching the cluster), `aws` CLI v2 (logged into the cluster's
   account), `docker` with `buildx`, `jq`, `openssl`.
-- **No Terraform** — the one IAM role is created by a small `aws` CLI script.
+- The one IAM role is created by a small `aws` CLI script (Phase 1.2).
 
 ## Values to collect FIRST (these unblock everything)
 
@@ -79,7 +79,7 @@ aws bedrock list-foundation-models --region eu-west-1 \
 ```
 You should see the model id, and the console shows **Access granted**.
 
-### 1.2 (YOU) — Create the Bedrock IRSA role (one script, no Terraform)
+### 1.2 (YOU) — Create the Bedrock IRSA role (one AWS CLI script)
 
 The agent calls Bedrock via IRSA: the `agent-runner` ServiceAccount assumes an
 IAM role whose policy is scoped to exactly one model. This is the **only** cloud
@@ -484,7 +484,6 @@ agent/
       overlays/                    PICK PER DEPLOY TARGET (apply on top of base/)
         eks-bedrock/               keyless Bedrock on EKS: irsa-bedrock.sh + sa-irsa-patch.yaml
         vanilla/                   any other cluster: static model key (README only)
-        aws-cloudfront/            public ingress: LoadBalancer receiver + CloudFront
 docs/customer-install/
   00-COMPLETE-GUIDE.md       ← you are here
   03-configure-jira-data-center.md the DC Jira admin deep-dive

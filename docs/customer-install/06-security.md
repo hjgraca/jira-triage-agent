@@ -29,17 +29,22 @@ fenced.
 - **Confirm:** for DC/Server, capture a real `X-Hub-Signature` and verify the
   `sha256=` prefix matches before going live.
 
-### Origin lock — **you must verify this**
+### Network boundary — **you must verify this**
 
-Whatever fronts the receiver (CloudFront or your own ALB) must be the *only* path
-to the `agent-receiver` Service. The default path locks it to CloudFront's
-**origin-facing managed prefix list** as a single SG rule (the LBC-managed NLB's
-`aws-load-balancer-security-group-prefix-lists` annotation); a custom ALB locks
-it with the ALB's security group / WAF. Until that's applied, auth is the only
-gate.
+The receiver is an in-cluster `ClusterIP` Service — it has **no public IP** and is
+reachable only from inside the cluster. The bundled `base/ingress-netpol.yaml`
+further restricts ingress to the input source's namespace (e.g. Jira's). Until
+that policy is enforced, any in-cluster pod could reach the receiver and auth is
+the only gate.
 
-- **Confirm:** a direct request to the Service hostname (bypassing the front
-  door) is refused — it hangs/times out, since only the prefix list is allowed.
+- **Confirm:** the ingress NetworkPolicy is actually enforced (it needs the AWS
+  VPC CNI network-policy controller, or your CNI's equivalent). From a pod in an
+  *unrelated* namespace, a request to
+  `http://agent-receiver.agents.svc.cluster.local/healthz` should be refused;
+  from the allowed input namespace it should return 200.
+- If you must accept a webhook from **outside** the cluster, front the Service
+  with your own Ingress/LoadBalancer + TLS and lock it to the source — but the
+  default, recommended posture keeps the receiver in-cluster with no public path.
 
 ### Receiver privilege (RBAC)
 
@@ -115,5 +120,5 @@ appears in a log, rotate it ([Operations → rotation](05-operations.md#credenti
 ## Pre-launch checklist
 
 The blocking items live in
-[Deploy → Pre-launch verification](04-deploy-agent.md#pre-launch-verification-blocking).
+[Deploy → pre-launch checklist](04b-deploy-data-center-in-cluster.md).
 Do all of them before the trigger points at a real project.

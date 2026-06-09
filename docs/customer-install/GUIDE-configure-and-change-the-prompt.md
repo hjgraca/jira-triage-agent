@@ -299,7 +299,7 @@ HARNESS=pi,MODEL=eu.anthropic.claude-sonnet-4-6,AWS_REGION=eu-west-1,GITLAB_BASE
 ```
 - `HARNESS=pi` — which coding agent CLI runs. Must match the image you built.
 - `MODEL=eu.anthropic.claude-sonnet-4-6` — the Bedrock model. **Must match** the
-  `bedrock_model_id` your terraform IAM policy allows, or Bedrock returns
+  the model the IRSA IAM policy allows, or Bedrock returns
   `AccessDenied`. Change all of them together if you switch models.
 - `AWS_REGION=eu-west-1` — must be a region your Bedrock access covers.
 - `GITLAB_BASE_URL=...` — the external GitLab URL the agent reads code from.
