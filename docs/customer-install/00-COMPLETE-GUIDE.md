@@ -36,12 +36,12 @@ Corporate net ─VPN─ Transit Gateway ─ VPC (EKS "devtools" cluster)
 ## Tools you need on your machine
 
 ```bash
-kubectl version --client && aws --version && eksctl version \
+kubectl version --client && aws --version \
   && docker buildx version && jq --version && openssl version
 ```
 - `kubectl` (matching the cluster), `aws` CLI v2 (logged into the cluster's
-  account), `eksctl`, `docker` with `buildx`, `jq`, `openssl`.
-- No Terraform needed.
+  account), `docker` with `buildx`, `jq`, `openssl`.
+- **No Terraform, no `eksctl`** — the one IAM role is created by raw `aws` calls.
 
 ## Values to collect FIRST (these unblock everything)
 
@@ -52,7 +52,7 @@ Fill this table before starting — every placeholder below comes from it:
 | 1 | EKS cluster name | `devtools` | Phase 2, 4 |
 | 2 | AWS region | `eu-west-1` | everywhere |
 | 3 | Bedrock model id | `eu.anthropic.claude-sonnet-4-6` | Phase 1, 4 |
-| 4 | ECR repo name | `triage-agent` | Phase 3 |
+| 4 | Image registry + repo (ECR, Nexus, Harbor, …) | `nexus.corp:8891/triage-agent` | Phase 3 |
 | 5 | Jira base URL | `https://jira.example.internal` | Phase 5, 6 |
 | 6 | Jira namespace (where Jira pods run) | `jira` | Phase 6 |
 | 7 | GitLab base URL (external, via NAT) | `https://gitlab.example.internal` | Phase 4 |
@@ -89,15 +89,14 @@ CLUSTER=<#1> REGION=eu-west-1 \
   agent/deploy/k8s/dc/irsa-bedrock.sh
 ```
 
-It creates the least-privilege policy (scoped to the model, never `*`), associates
-the cluster OIDC provider if needed, binds the role to `agents:agent-runner`, and
-prints:
+Raw `aws` CLI only — **no `eksctl`, no Terraform**. It creates the
+least-privilege policy (scoped to the model, never `*`), associates the cluster
+OIDC provider if needed, binds the role to `agents:agent-runner`, and prints:
 ```
 ✅ IRSA role ready:
    arn:aws:iam::<acct>:role/<cluster>-triage-bedrock
 ```
-**Record that ARN** — it goes into `namespace.yaml` in Phase 4. (No `eksctl`? the
-script prints a raw-`aws iam` fallback.)
+**Record that ARN** — it goes into `namespace.yaml` in Phase 4.
 
 ---
 
@@ -110,33 +109,41 @@ kubectl get ns        # you should see the Jira namespace and (after Phase 4) ag
 
 ---
 
-# Phase 3 — Build and push the image to ECR
+# Phase 3 — Build and push the image (any registry)
 
 The image is built in **three layers** (engine → harness CLI → the one agent),
-`linux/amd64` to match EKS nodes. Build context is the `agent/` directory.
+`linux/amd64` to match EKS nodes. Build context is the `agent/` directory. It
+pushes to **whatever registry you point it at** — ECR, Sonatype Nexus, Harbor,
+GHCR, Docker Hub, a self-hosted registry. `<#4>` is your full registry + repo
+path (no tag), e.g. `nexus.corp:8891/triage-agent` or
+`111122223333.dkr.ecr.eu-west-1.amazonaws.com/triage-agent`.
 
-### 3.1 — Log in to ECR + ensure the repo exists
+### 3.1 — Log in to your registry
 
 ```bash
-ACCT=$(aws sts get-caller-identity --query Account --output text)
-REGION=eu-west-1
-REPO=$ACCT.dkr.ecr.$REGION.amazonaws.com/<#4>
-aws ecr describe-repositories --repository-names <#4> --region $REGION >/dev/null 2>&1 \
-  || aws ecr create-repository --repository-name <#4> --region $REGION >/dev/null
-aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "${REPO%/*}"
+docker login <#4-host>          # your registry's host — it'll prompt for creds
 ```
+> **ECR?** Use the bundled convenience instead (creates the repo + logs in):
+> ```bash
+> cd agent && make ecr-login REGION=eu-west-1 ECR_REPO=triage-agent && cd ..
+> ```
+> Any other registry (Nexus/Harbor/…): a plain `docker login <host>` is all you
+> need — the cluster must also be able to reach and pull from it (see Phase 4 for
+> the pull-secret if it's private).
 
 ### 3.2 — Build + push (pick ONE)
 
 **Option A — the shipped Makefile** (from the `agent/` directory):
 ```bash
 cd agent
-make agent-image AGENT=jira-triage-dc HARNESS=pi REGION=eu-west-1 AGENT_ECR_REPO=<#4>
+make agent-image AGENT=jira-triage-dc HARNESS=pi REGISTRY=<#4>
 cd ..
+# → pushes <#4>:jira-triage-dc-pi
 ```
 
 **Option B — raw docker** (no `make`):
 ```bash
+REPO=<#4>
 docker buildx build --platform linux/amd64 \
   -f agent/deploy/docker/base.Dockerfile -t agent-base:local --load agent
 docker buildx build --platform linux/amd64 \
@@ -145,11 +152,9 @@ docker buildx build --platform linux/amd64 \
   -f agent/agents/jira-triage-dc/Dockerfile --build-arg BASE=agent-pi:local -t "$REPO:jira-triage-dc-pi" --push agent
 ```
 
-**Verify:**
+**Verify** the tag is in the registry (registry-agnostic):
 ```bash
-aws ecr describe-images --repository-name <#4> --region eu-west-1 \
-  --query "imageDetails[?contains(imageTags,'jira-triage-dc-pi')].imageTags" --output text
-# → jira-triage-dc-pi
+docker buildx imagetools inspect <#4>:jira-triage-dc-pi >/dev/null && echo "pushed ✅"
 ```
 
 > **Iterating later?** The tag is fixed, and Kubernetes caches fixed tags
@@ -209,12 +214,21 @@ Phase 5.3. `assignees` are **DC usernames** (or leave `[]` so it only recommends
 ```
 
 **`agent/deploy/k8s/dc/receiver.yaml`** — set:
-- `image:` and `AGENT_IMAGE` → `<#4 repo>:jira-triage-dc-pi` (both, same value)
+- `image:` and `AGENT_IMAGE` → `<#4>:jira-triage-dc-pi` (both, same value)
 - in `RUN_ENV`, `GITLAB_BASE_URL=<#7>` (the external GitLab HTTPS URL)
 - `AUTHORIZED_ACTORS` → `<#9>` (DC usernames allowed to trigger)
 - (already set: `TRIGGER=jira-dc`, `MODEL=eu.anthropic.claude-sonnet-4-6`,
   `AWS_REGION=eu-west-1`, ClusterIP Service)
 - If PATs are disabled (Phase 5.2), append `,JIRA_AUTH_SCHEME=basic` to `RUN_ENV`.
+- **Private registry (Nexus/Harbor/…)?** Create a pull secret and wire it so both
+  the receiver and the run Jobs can pull:
+  ```bash
+  kubectl -n agents create secret docker-registry regcred \
+    --docker-server=<#4-host> --docker-username=<user> --docker-password=<pass>
+  ```
+  then uncomment `imagePullSecrets:` (pod spec) **and** `IMAGE_PULL_SECRET=regcred`
+  (env) in `receiver.yaml`. Skip this for public images or ECR pulled via the node
+  role.
 
 **`agent/deploy/k8s/dc/ingress-netpol.yaml`** — replace `<jira-namespace>` with
 `<#6>`. If that namespace has no `kubernetes.io/metadata.name` label, label it:
@@ -226,7 +240,7 @@ kubectl label namespace <#6> kubernetes.io/metadata.name=<#6> --overwrite
 ```bash
 for f in agent/deploy/k8s/dc/*.yaml agent/deploy/k8s/config.yaml agent/deploy/k8s/namespace.yaml; do
   kubectl apply --dry-run=client -f "$f" >/dev/null && echo "ok $f"; done
-grep -RN "REPLACE_ME\|<ACCT>\|<jira-namespace>\|<your-gitlab-host>\|<dc-username\|<#" \
+grep -RN "REPLACE_ME\|<REGISTRY>\|<ACCT>\|<ACCOUNT_ID>\|<NAME>\|<jira-namespace>\|<your-gitlab-host>\|<dc-username\|<#" \
   agent/deploy/k8s/config.yaml agent/deploy/k8s/secrets.yaml agent/deploy/k8s/namespace.yaml \
   agent/deploy/k8s/dc/receiver.yaml agent/deploy/k8s/dc/ingress-netpol.yaml \
   && echo "↑ placeholders still present — fix them" || echo "no placeholders left ✅"
@@ -403,7 +417,7 @@ cd agent && make test        # or: (cd runtime && node --test) && bash agents/ji
 | Stop new runs now | `kubectl -n agents scale deploy/agent-receiver --replicas=0` |
 | Stop deliveries | disable the Jira Automation rule / system webhook |
 | Remove the agent | `kubectl delete ns agents` |
-| Remove the IAM role | `eksctl delete iamserviceaccount --cluster <#1> --namespace agents --name agent-runner` (then delete the policy if unused) |
+| Remove the IAM role | `aws iam detach-role-policy --role-name <#1>-triage-bedrock --policy-arn <policy-arn>` then `aws iam delete-role --role-name <#1>-triage-bedrock` (and `delete-policy` if unused) |
 
 The agent only **reads** GitLab and writes to tickets within allowed-value sets —
 rollback has no data-loss surface beyond comments/labels on test tickets.

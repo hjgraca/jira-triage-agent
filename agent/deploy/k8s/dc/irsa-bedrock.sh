@@ -4,14 +4,12 @@
 # The agent calls Amazon Bedrock from the cluster via IRSA: the agent-runner
 # ServiceAccount assumes an IAM role whose policy is scoped to EXACTLY one model.
 # That single role is the only cloud resource — everything else is `kubectl apply`.
-# This script creates it with eksctl (EKS-native) and prints the role ARN to paste
-# into namespace.yaml. No state files, no providers, no terraform.
+# This script creates it with the raw AWS CLI only (no eksctl, no Terraform, no
+# state files) and prints the role ARN to paste into namespace.yaml.
 #
-# Idempotent: re-running updates the SA/role rather than erroring.
+# Idempotent: re-running updates the policy/role rather than erroring.
 #
-# Prereqs: aws CLI v2 (logged in to the cluster's account), eksctl, jq, kubectl.
-# If you don't have eksctl, see the "Raw AWS CLI fallback" at the bottom — same
-# result with `aws iam` calls only.
+# Prereqs: aws CLI v2 (logged in to the cluster's account) and jq. Nothing else.
 #
 # Usage:
 #   CLUSTER=<eks-cluster-name> REGION=eu-west-1 ./irsa-bedrock.sh
@@ -29,8 +27,8 @@ MODEL="${MODEL:-eu.anthropic.claude-sonnet-4-6}"
 ROLE_NAME="${ROLE_NAME:-${CLUSTER}-triage-bedrock}"
 POLICY_NAME="${POLICY_NAME:-${ROLE_NAME}-invoke}"
 
-command -v aws    >/dev/null || { echo "aws CLI v2 required"; exit 1; }
-command -v jq     >/dev/null || { echo "jq required"; exit 1; }
+command -v aws >/dev/null || { echo "aws CLI v2 required"; exit 1; }
+command -v jq  >/dev/null || { echo "jq required"; exit 1; }
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 # A cross-region inference profile id (eu./us./apac.) invokes the underlying
@@ -69,57 +67,62 @@ else
     --policy-document "$POLICY_DOC" >/dev/null
 fi
 
-# 2. The IRSA role + SA annotation, via eksctl (creates/associates the OIDC trust
-#    for namespace:serviceaccount and annotates the SA in-cluster).
-if command -v eksctl >/dev/null; then
-  echo "ensuring cluster OIDC provider is associated…"
-  eksctl utils associate-iam-oidc-provider --cluster "$CLUSTER" --region "$REGION" --approve >/dev/null 2>&1 || true
+# 2. Ensure the cluster's IAM OIDC provider exists (IRSA's trust anchor).
+#    eksctl used to do this; here it's two raw calls.
+OIDC_ISSUER="$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
+  --query 'cluster.identity.oidc.issuer' --output text)"
+OIDC_HOST="${OIDC_ISSUER#https://}"
+OIDC_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/${OIDC_HOST}"
 
-  echo "creating IRSA role $ROLE_NAME bound to $NAMESPACE:$SA…"
-  # --override-existing-serviceaccounts: annotate the SA even though namespace.yaml
-  # already declares it. --role-only keeps eksctl from owning the SA object; we let
-  # the manifests own it and just need the role+annotation.
-  eksctl create iamserviceaccount \
-    --cluster "$CLUSTER" --region "$REGION" \
-    --namespace "$NAMESPACE" --name "$SA" \
-    --role-name "$ROLE_NAME" \
-    --attach-policy-arn "$POLICY_ARN" \
-    --override-existing-serviceaccounts \
-    --approve
-
-  ROLE_ARN="$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)"
-  echo
-  echo "✅ IRSA role ready:"
-  echo "   $ROLE_ARN"
-  echo
-  echo "Put this in agent/deploy/k8s/namespace.yaml on the agent-runner SA:"
-  echo "   eks.amazonaws.com/role-arn: $ROLE_ARN"
-  echo
-  echo "(eksctl already annotated the live SA; the manifest line keeps it correct"
-  echo " on re-apply. Apply namespace.yaml AFTER this so the annotation persists.)"
+if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" >/dev/null 2>&1; then
+  echo "OIDC provider already associated"
 else
-  cat <<EOF
-eksctl not found. Either install it, or run the raw AWS CLI fallback:
-
-  OIDC=\$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \\
-    --query 'cluster.identity.oidc.issuer' --output text | sed 's,https://,,')
-
-  TRUST=\$(cat <<JSON
-  { "Version":"2012-10-17","Statement":[{
-    "Effect":"Allow",
-    "Principal":{"Federated":"arn:aws:iam::${ACCOUNT_ID}:oidc-provider/\$OIDC"},
-    "Action":"sts:AssumeRoleWithWebIdentity",
-    "Condition":{"StringEquals":{
-      "\$OIDC:sub":"system:serviceaccount:${NAMESPACE}:${SA}",
-      "\$OIDC:aud":"sts.amazonaws.com"}}}]}
-  JSON
-  )
-  aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document "\$TRUST"
-  aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$POLICY_ARN"
-  aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text
-  # → paste that ARN into namespace.yaml (agent-runner SA annotation)
-  # NOTE: requires the cluster OIDC provider to already exist
-  #   (aws iam list-open-id-connect-providers).
-EOF
-  exit 0
+  echo "associating cluster OIDC provider $OIDC_HOST"
+  # The thumbprint is no longer security-relevant for EKS OIDC (STS validates the
+  # issuer directly), but the API still requires one; a well-known root works and
+  # AWS ignores it for *.eks.amazonaws.com issuers.
+  aws iam create-open-id-connect-provider \
+    --url "$OIDC_ISSUER" \
+    --client-id-list "sts.amazonaws.com" \
+    --thumbprint-list "9e99a48a9960b14926bb7f3b02e22da2b0ab7280" >/dev/null
 fi
+
+# 3. The IRSA role: trust policy ties the OIDC provider to ONE
+#    namespace:serviceaccount, so only the agent-runner SA can assume it.
+TRUST_DOC="$(jq -n --arg arn "$OIDC_ARN" --arg host "$OIDC_HOST" \
+  --arg sub "system:serviceaccount:${NAMESPACE}:${SA}" '{
+  Version: "2012-10-17",
+  Statement: [{
+    Effect: "Allow",
+    Principal: { Federated: $arn },
+    Action: "sts:AssumeRoleWithWebIdentity",
+    Condition: { StringEquals: {
+      "\($host):sub": $sub,
+      "\($host):aud": "sts.amazonaws.com"
+    } }
+  }]
+}')"
+
+if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+  echo "role exists → updating its trust policy"
+  aws iam update-assume-role-policy --role-name "$ROLE_NAME" \
+    --policy-document "$TRUST_DOC" >/dev/null
+else
+  echo "creating IRSA role $ROLE_NAME bound to $NAMESPACE:$SA"
+  aws iam create-role --role-name "$ROLE_NAME" \
+    --description "Triage agent run-Job role; assumed by ${NAMESPACE}:${SA} via IRSA." \
+    --assume-role-policy-document "$TRUST_DOC" >/dev/null
+fi
+
+# attach-role-policy is idempotent (no error if already attached).
+aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$POLICY_ARN" >/dev/null
+
+ROLE_ARN="$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)"
+echo
+echo "✅ IRSA role ready:"
+echo "   $ROLE_ARN"
+echo
+echo "Put this in agent/deploy/k8s/namespace.yaml on the agent-runner SA:"
+echo "   eks.amazonaws.com/role-arn: $ROLE_ARN"
+echo
+echo "Then apply namespace.yaml (the SA annotation is what binds the role to the pod)."

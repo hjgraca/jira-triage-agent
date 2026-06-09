@@ -35,6 +35,10 @@ const RUN_ENV = parseEnvList(process.env.RUN_ENV);
 // touches secret values. Empty → no envFrom.
 const RUN_SECRET = process.env.RUN_SECRET || '';
 const RUN_CONFIGMAP = process.env.RUN_CONFIGMAP || '';
+// Optional: a docker-registry Secret name for pulling the run image from a
+// PRIVATE registry (Nexus/Harbor/…). Empty → no pull secret (public / ECR via
+// node role). Set IMAGE_PULL_SECRET in the receiver env to enable.
+const IMAGE_PULL_SECRET = process.env.IMAGE_PULL_SECRET || '';
 
 const { name: TRIGGER_NAME, trigger } = getTrigger(process.env.TRIGGER);
 const agentDef = loadAgentDef(AGENT_PATH);
@@ -124,6 +128,7 @@ async function handleWebhook(req, res, rawBody) {
     env: RUN_ENV,
     secretName: RUN_SECRET || undefined,
     configMapName: RUN_CONFIGMAP || undefined,
+    imagePullSecret: IMAGE_PULL_SECRET || undefined,
   });
   try {
     const r = await jobCreator(manifest);

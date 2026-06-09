@@ -58,3 +58,12 @@ test('buildJob: secret via envFrom, config MOUNTED as a file (not envFrom)', () 
   const mount = c.volumeMounts.find((m) => m.mountPath === '/etc/triage');
   assert.ok(mount && mount.readOnly);
 });
+
+test('buildJob: imagePullSecret threads to pod spec only when set (private registries)', () => {
+  // Omitted → no imagePullSecrets key at all (public / ECR via node role).
+  const none = buildJob({ name: 'a-1', image: 'r/x', vars: {} });
+  assert.ok(!('imagePullSecrets' in none.spec.template.spec));
+  // Set → pod spec references the named docker-registry Secret (Nexus/Harbor/…).
+  const withSecret = buildJob({ name: 'a-2', image: 'nexus.corp:8891/x', vars: {}, imagePullSecret: 'regcred' });
+  assert.deepStrictEqual(withSecret.spec.template.spec.imagePullSecrets, [{ name: 'regcred' }]);
+});

@@ -30,6 +30,7 @@ function buildJob(opts) {
     secretName, // Job pulls creds from this Secret via envFrom — NOT copied here
     configMapName, // allowed-value config, MOUNTED AS A FILE at configMountPath
     configMountPath = '/etc/triage', // where the skill reads config.json (TRIAGE_CONFIG)
+    imagePullSecret, // optional: name of a docker-registry Secret for private registries (Nexus/Harbor/…)
     serviceAccount = 'agent-runner',
     ttl = 3600, // delete finished Jobs after 1h
     deadline = 600, // hard wall-clock cap per run (the old watchdog)
@@ -60,6 +61,9 @@ function buildJob(opts) {
         spec: {
           restartPolicy: 'Never',
           serviceAccountName: serviceAccount,
+          // Private registry (Nexus/Harbor/…): the kubelet needs a pull secret to
+          // fetch the run image. Omitted entirely for public/ECR-on-node-role pulls.
+          ...(imagePullSecret ? { imagePullSecrets: [{ name: imagePullSecret }] } : {}),
           ...(volumes.length ? { volumes } : {}),
           containers: [
             {

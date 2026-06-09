@@ -26,13 +26,19 @@ aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
 aws iam list-open-id-connect-providers
 ```
 
-If no provider is listed for that issuer, create one once:
+If no provider is listed for that issuer, the DC path's `irsa-bedrock.sh` creates
+it for you (raw `aws`, no `eksctl`). To create it by hand:
 
 ```bash
-eksctl utils associate-iam-oidc-provider --cluster "$CLUSTER" --region "$REGION" --approve
+ISSUER=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
+  --query 'cluster.identity.oidc.issuer' --output text)
+aws iam create-open-id-connect-provider --url "$ISSUER" \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 9e99a48a9960b14926bb7f3b02e22da2b0ab7280
 ```
 
-You'll pass the **provider ARN** into `agent/deploy/terraform` as `oidc_provider_arn`.
+On the Cloud path you pass the **provider ARN** into `agent/deploy/terraform` as
+`oidc_provider_arn`; on the DC path the script handles it.
 
 ## 2. Amazon Bedrock model access
 
@@ -43,10 +49,19 @@ exactly that model — do not widen it to `*`.
 
 ## 3. A container registry the cluster can pull from
 
-ECR is assumed in examples, but any registry works. You need push access from
-your build machine and pull access from the cluster's node role.
+**Any** registry works — ECR, Sonatype Nexus, Harbor, GHCR, Docker Hub, or a
+self-hosted one. You need push access from your build machine and pull access
+from the cluster. Nothing is ECR-specific: the image ref is a plain string in the
+manifests, and the build target takes a `REGISTRY=<host>/<repo>` of your choosing.
+
+- **Self-hosted (Nexus/Harbor/…):** ensure EKS nodes can reach it on the network,
+  and (if it's private) create a `docker-registry` pull secret — the deploy step
+  wires it in via `imagePullSecrets` / `IMAGE_PULL_SECRET`.
+- **ECR:** pull works via the node role; `make ecr-login` creates the repo + logs
+  in as a convenience.
 
 ```bash
+# ECR convenience (skip for any other registry — just `docker login <host>`):
 aws ecr create-repository --repository-name triage-agent --region "$REGION"   # if needed
 ```
 
@@ -80,10 +95,12 @@ Service.
 | Tool | Version | Used for |
 |---|---|---|
 | `kubectl` | matching your cluster | applying `agent/deploy/k8s` |
-| `terraform` | >= 1.5 | `agent/deploy/terraform` (IRSA + CloudFront) |
-| `docker` (with `buildx`) | recent | building the `linux/amd64` image |
-| `aws` CLI | v2 | ECR login, EKS describe, terraform auth |
+| `docker` (with `buildx`) | recent | building + pushing the `linux/amd64` image |
+| `aws` CLI | v2 | IRSA role (DC path), EKS describe; ECR login if you use ECR |
 | `jq`, `curl`, `openssl` | any | secrets, probes, verification |
+| `terraform` | >= 1.5 | **Cloud path only** — `agent/deploy/terraform` (IRSA + CloudFront) |
+
+No `eksctl` needed — the DC path's `irsa-bedrock.sh` uses raw `aws` calls.
 
 ## Values to collect now
 
@@ -92,7 +109,8 @@ Have these ready for the later steps:
 - [ ] Cluster **OIDC provider ARN** (step 1)
 - [ ] **Region** and a unique **name prefix** for IAM resources (e.g. `acme-prod`)
 - [ ] **Bedrock model id** you have access to
-- [ ] **Registry** repo URI (e.g. `<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent`)
+- [ ] **Registry** + repo path — any registry (e.g. `nexus.corp:8891/triage-agent`
+      or `<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent`)
 - [ ] Your Jira **base URL** and whether it's **Cloud** or **Data Center**
 - [ ] Your GitLab **base URL** (in-cluster Service DNS preferred)
 

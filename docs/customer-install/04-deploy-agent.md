@@ -58,9 +58,12 @@ The image is `linux/amd64` (match it to your node arch). Build context is
 owns its `Dockerfile` under `agent/agents/<name>/`. One agent per image, deployed
 in isolation. Pick the harness — see [Choose your harness](03b-choose-harness.md).
 
+`REPO` is your full registry + repo path — **any registry** (ECR, Nexus, Harbor,
+GHCR, …). `docker login` to it first (for ECR: `aws ecr get-login-password
+--region <region> | docker login --username AWS --password-stdin <acct>.dkr.ecr.<region>.amazonaws.com`).
+
 ```bash
-REPO=<acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
-aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin "${REPO%/*}"
+REPO=<your-registry>/triage-agent      # e.g. nexus.corp:8891/triage-agent  or  <acct>.dkr.ecr.<region>.amazonaws.com/triage-agent
 
 # base (engine) → pi (engine + CLI) → jira-triage (one agent).
 docker build -f agent/deploy/docker/base.Dockerfile   -t agent-base:local       agent
@@ -70,7 +73,12 @@ docker push "$REPO:latest"
 # (swap pi.Dockerfile → kiro/opencode; swap the agent Dockerfile for another agent)
 ```
 
-(The one-liner is `make agent-image AGENT=jira-triage HARNESS=pi`.)
+(The one-liner is `make agent-image AGENT=jira-triage HARNESS=pi REGISTRY=$REPO`.)
+
+> **Private registry (Nexus/Harbor/…)?** The cluster also needs to pull it: create
+> a `docker-registry` pull secret in the `agents` namespace and set
+> `imagePullSecrets` + `IMAGE_PULL_SECRET` in `receiver.yaml` (both are commented
+> placeholders there). ECR via the node role needs neither.
 
 ## Step 3 — Fill in the manifests
 

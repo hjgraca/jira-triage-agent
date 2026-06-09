@@ -42,11 +42,21 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
+      # PRIVATE REGISTRY ONLY (Nexus/Harbor/…): uncomment and name a
+      # docker-registry pull Secret created in the agents namespace:
+      #   kubectl -n agents create secret docker-registry regcred \
+      #     --docker-server=<host> --docker-username=… --docker-password=…
+      # Leave commented for public images or ECR pulled via the node role.
+      # (Also set IMAGE_PULL_SECRET in the env below so RUN Jobs get it too.)
+      # imagePullSecrets:
+      #   - name: regcred
       containers:
         - name: receiver
-          # REPLACE with your built+pushed image (see Deploy → Step 2/3). The
-          # committed value was a dev-lab image and will NOT pull in your account.
-          image: <ACCT>.dkr.ecr.<REGION>.amazonaws.com/triage-agent:latest
+          # REPLACE with your built+pushed image — ANY registry (ECR, Nexus,
+          # Harbor, GHCR, …). See Deploy → Step 2/3.
+          #   ECR:   <ACCT>.dkr.ecr.<REGION>.amazonaws.com/triage-agent:latest
+          #   Nexus: nexus.corp.internal:8891/triage-agent:latest
+          image: <REGISTRY>/triage-agent:latest
           command: ["node", "runtime/receiver.js"]
           ports:
             - { name: http, containerPort: 8080 }
@@ -57,7 +67,11 @@ spec:
             - { name: TRIGGER, value: "jira" }
             # The image to stamp into run Jobs — normally this same image.
             # REPLACE with the SAME image as above.
-            - { name: AGENT_IMAGE, value: "<ACCT>.dkr.ecr.<REGION>.amazonaws.com/triage-agent:latest" }
+            - { name: AGENT_IMAGE, value: "<REGISTRY>/triage-agent:latest" }
+            # PRIVATE REGISTRY ONLY: docker-registry Secret name so the kubelet can
+            # pull the run-Job image. Match the imagePullSecrets name above. Leave
+            # unset for public images or ECR via the node role.
+            # - { name: IMAGE_PULL_SECRET, value: "regcred" }
             # Non-secret env passed to each run Job. opencode talks to Bedrock via
             # the SAME IRSA role as pi (agent-runner SA → AWS_WEB_IDENTITY_TOKEN_FILE),
             # so no key — but its model id needs the provider prefix
