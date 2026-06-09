@@ -6,7 +6,7 @@
 > **Cloud / public-ingress** path. Also note: `make agent-deploy` /
 > `../workshop/…` referenced below are **lab** conveniences (the repo-root
 > `Makefile`); for install, use the agent's own `agent/Makefile`, which has
-> `agent-image`, `test`, and `agent-deploy-dc`.
+> `agent-image`, `test`, and `agent-deploy`.
 
 Provision the cloud dependencies, build the image, fill in the manifests, apply,
 lock the webhook origin, and run the pre-launch checklist. This is the

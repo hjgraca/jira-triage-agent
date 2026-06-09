@@ -40,7 +40,7 @@ AGENT_HARNESS_TAG := agent-$(HARNESS):local
 REGION   ?= eu-west-1
 ECR_REPO ?= triage-agent
 
-.PHONY: agent-image ecr-login test agent-deploy agent-deploy-dc
+.PHONY: agent-image ecr-login test agent-deploy
 
 ## Build and push one agent image: AGENT (default jira-triage-dc) x HARNESS (pi).
 ## Three layers: base (engine) -> harness (engine + CLI) -> agent (one agent).
@@ -100,6 +100,3 @@ agent-deploy:
 		fi; \
 		kubectl -n agents rollout status deploy/agent-receiver; \
 	fi
-
-## Back-compat alias.
-agent-deploy-dc: agent-deploy
