@@ -4,12 +4,12 @@
 # The agent calls Amazon Bedrock from the cluster via IRSA: the agent-runner
 # ServiceAccount assumes an IAM role whose policy is scoped to EXACTLY one model.
 # That single role is the only cloud resource — everything else is `kubectl apply`.
-# This script creates it with the raw AWS CLI only (no eksctl, no Terraform, no
-# state files) and prints the role ARN to paste into namespace.yaml.
+# This script creates it with the AWS CLI and prints the role ARN to paste into
+# namespace.yaml. No Terraform, no state files.
 #
 # Idempotent: re-running updates the policy/role rather than erroring.
 #
-# Prereqs: aws CLI v2 (logged in to the cluster's account) and jq. Nothing else.
+# Prereqs: aws CLI v2 (logged in to the cluster's account) and jq.
 #
 # Usage:
 #   CLUSTER=<eks-cluster-name> REGION=eu-west-1 ./irsa-bedrock.sh
@@ -68,7 +68,6 @@ else
 fi
 
 # 2. Ensure the cluster's IAM OIDC provider exists (IRSA's trust anchor).
-#    eksctl used to do this; here it's two raw calls.
 OIDC_ISSUER="$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
   --query 'cluster.identity.oidc.issuer' --output text)"
 OIDC_HOST="${OIDC_ISSUER#https://}"

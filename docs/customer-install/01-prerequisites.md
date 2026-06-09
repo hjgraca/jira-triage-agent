@@ -27,7 +27,7 @@ aws iam list-open-id-connect-providers
 ```
 
 If no provider is listed for that issuer, the DC path's `irsa-bedrock.sh` creates
-it for you (raw `aws`, no `eksctl`). To create it by hand:
+it for you. To create it by hand:
 
 ```bash
 ISSUER=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
@@ -99,8 +99,6 @@ Service.
 | `aws` CLI | v2 | IRSA role (DC path), EKS describe; ECR login if you use ECR |
 | `jq`, `curl`, `openssl` | any | secrets, probes, verification |
 | `terraform` | >= 1.5 | **Cloud path only** — `agent/deploy/terraform` (IRSA + CloudFront) |
-
-No `eksctl` needed — the DC path's `irsa-bedrock.sh` uses raw `aws` calls.
 
 ## Values to collect now
 

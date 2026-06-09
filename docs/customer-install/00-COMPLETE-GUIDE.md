@@ -41,7 +41,7 @@ kubectl version --client && aws --version \
 ```
 - `kubectl` (matching the cluster), `aws` CLI v2 (logged into the cluster's
   account), `docker` with `buildx`, `jq`, `openssl`.
-- **No Terraform, no `eksctl`** — the one IAM role is created by raw `aws` calls.
+- **No Terraform** — the one IAM role is created by a small `aws` CLI script.
 
 ## Values to collect FIRST (these unblock everything)
 
@@ -89,9 +89,9 @@ CLUSTER=<#1> REGION=eu-west-1 \
   agent/deploy/k8s/dc/irsa-bedrock.sh
 ```
 
-Raw `aws` CLI only — **no `eksctl`, no Terraform**. It creates the
-least-privilege policy (scoped to the model, never `*`), associates the cluster
-OIDC provider if needed, binds the role to `agents:agent-runner`, and prints:
+It creates the least-privilege policy (scoped to the model, never `*`),
+associates the cluster OIDC provider if needed, binds the role to
+`agents:agent-runner`, and prints:
 ```
 ✅ IRSA role ready:
    arn:aws:iam::<acct>:role/<cluster>-triage-bedrock
